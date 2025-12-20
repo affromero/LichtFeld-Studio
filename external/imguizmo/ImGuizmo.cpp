@@ -27,9 +27,11 @@
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
-#include "ImGuizmo.h"
+// clang-format off
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "ImGuizmo.h"
+// clang-format on
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <malloc.h>
