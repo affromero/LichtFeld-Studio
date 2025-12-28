@@ -442,12 +442,12 @@ namespace lfs::io {
                     try {
                         std::vector<uint8_t> jpeg_data(*batch[i].jpeg_data);
                         auto tensor = nvcodec.load_image_from_memory_gpu(jpeg_data, 1, 0, nullptr);
-                        
+
                         if (!tensor.is_valid() || tensor.numel() == 0) {
                             LOG_WARN("[PipelinedImageLoader] GPU decode returned invalid tensor for {}", batch[i].path.string());
                             throw std::runtime_error("Invalid tensor");
                         }
-                        
+
                         output_queue_.push({batch[i].sequence_id, std::move(tensor), nullptr});
                         std::lock_guard<std::mutex> lock(stats_mutex_);
                         ++stats_.total_images_loaded;
