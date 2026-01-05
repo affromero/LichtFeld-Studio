@@ -343,13 +343,16 @@ namespace lfs::vis::gui {
                 if (!font)
                     return nullptr;
 
-                // Merge Japanese glyphs if available
+                // Merge Japanese + Chinese glyphs if available (NotoSansJP contains both)
                 if (is_font_valid(japanese_path)) {
                     ImFontConfig config;
                     config.MergeMode = true;
                     const std::string japanese_path_utf8 = lfs::core::path_to_utf8(japanese_path);
                     io.Fonts->AddFontFromFileTTF(japanese_path_utf8.c_str(), size, &config,
                                                  io.Fonts->GetGlyphRangesJapanese());
+                    // Chinese glyphs are also in NotoSansJP, just need to load the ranges
+                    io.Fonts->AddFontFromFileTTF(japanese_path_utf8.c_str(), size, &config,
+                                                 io.Fonts->GetGlyphRangesChineseFull());
                 }
 
                 // Merge Korean glyphs if available
@@ -387,7 +390,7 @@ namespace lfs::vis::gui {
             } else {
                 LOG_INFO("Loaded fonts: {} and {}", t.fonts.regular_path, t.fonts.bold_path);
                 if (is_font_valid(japanese_path)) {
-                    LOG_INFO("Japanese font support enabled");
+                    LOG_INFO("Japanese + Chinese font support enabled");
                 }
                 if (is_font_valid(korean_path)) {
                     LOG_INFO("Korean font support enabled");
