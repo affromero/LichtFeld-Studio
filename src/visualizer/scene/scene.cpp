@@ -1259,7 +1259,7 @@ namespace lfs::vis {
         static const glm::mat4 IDENTITY{1.0f};
         if (splats.size() == 1 && splats[0].second == IDENTITY) {
             const auto* const src = splats[0].first;
-            
+
             // Filter out deleted splats if deletion mask exists
             if (src->has_deleted_mask()) {
                 const auto keep_mask = src->deleted().logical_not();
@@ -1320,7 +1320,7 @@ namespace lfs::vis {
                 rotation = model->rotation_raw().clone();
                 opacity = model->opacity_raw().clone();
             }
-            
+
             lfs::core::SplatData transformed(
                 model->get_max_sh_degree(),
                 std::move(means),

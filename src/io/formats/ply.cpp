@@ -746,11 +746,11 @@ namespace lfs::io {
 
         // Filter out deleted splats if deletion mask exists
         Tensor means, sh0, shN, opacity, scaling, rotation;
-        
+
         if (splat_data.has_deleted_mask()) {
             // Create keep mask (inverse of deleted mask)
             const auto keep_mask = splat_data.deleted().logical_not();
-            
+
             // Filter all tensors by keep mask
             means = splat_data.means().index_select(0, keep_mask);
             if (splat_data.sh0().is_valid())
