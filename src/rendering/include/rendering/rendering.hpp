@@ -71,6 +71,7 @@ namespace lfs::rendering {
         bool point_cloud_mode = false;
         float voxel_size = 0.01f;
         bool gut = false;
+        bool equirectangular = false;
         bool show_rings = false;
         float ring_width = 0.002f;
         bool show_center_markers = false;
@@ -157,6 +158,7 @@ namespace lfs::rendering {
         bool point_cloud_mode = false;
         float voxel_size = 0.01f;
         bool gut = false;
+        bool equirectangular = false;
         bool show_rings = false;
         float ring_width = 0.002f;
 
@@ -232,6 +234,7 @@ namespace lfs::rendering {
         bool point_cloud_mode = false;
         float voxel_size = 0.01f;
         bool gut = false;
+        bool equirectangular = false;
         bool show_rings = false;
         float ring_width = 0.002f;
     };
@@ -322,7 +325,8 @@ namespace lfs::rendering {
         virtual Result<void> renderCoordinateAxes(
             const ViewportData& viewport,
             float size = 2.0f,
-            const std::array<bool, 3>& visible = {true, true, true}) = 0;
+            const std::array<bool, 3>& visible = {true, true, true},
+            bool equirectangular = false) = 0;
 
         virtual Result<void> renderPivot(
             const ViewportData& viewport,
@@ -361,7 +365,8 @@ namespace lfs::rendering {
             float scale = 0.1f,
             const glm::vec3& train_color = glm::vec3(0.0f, 1.0f, 0.0f),
             const glm::vec3& eval_color = glm::vec3(1.0f, 0.0f, 0.0f),
-            const glm::mat4& scene_transform = glm::mat4(1.0f)) = 0;
+            const glm::mat4& scene_transform = glm::mat4(1.0f),
+            bool equirectangular_view = false) = 0;
 
         // Camera frustum rendering with highlighting
         virtual Result<void> renderCameraFrustumsWithHighlight(
@@ -371,7 +376,8 @@ namespace lfs::rendering {
             const glm::vec3& train_color = glm::vec3(0.0f, 1.0f, 0.0f),
             const glm::vec3& eval_color = glm::vec3(1.0f, 0.0f, 0.0f),
             int highlight_index = -1,
-            const glm::mat4& scene_transform = glm::mat4(1.0f)) = 0;
+            const glm::mat4& scene_transform = glm::mat4(1.0f),
+            bool equirectangular_view = false) = 0;
 
         // Camera frustum picking
         virtual Result<int> pickCameraFrustum(
