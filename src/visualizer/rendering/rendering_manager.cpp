@@ -14,6 +14,7 @@
 #include "rendering/rasterizer/rasterization/include/rasterization_api_tensor.h"
 #include "rendering/rasterizer/rasterization/include/rasterization_config.h"
 #include "rendering/rendering.hpp"
+#include "rendering/rendering_pipeline.hpp"
 #include "scene/scene_manager.hpp"
 #include "training/trainer.hpp"
 #include "training/training_manager.hpp"
@@ -26,7 +27,7 @@ namespace lfs::vis {
 
     namespace {
         constexpr int GPU_ALIGNMENT = 16; // 16-pixel alignment for GPU texture efficiency
-    }
+    }                                     // namespace
 
     using namespace lfs::core::events;
 
@@ -686,6 +687,7 @@ namespace lfs::vis {
             .selected_node_mask = (settings_.desaturate_unselected || getSelectionFlashIntensity() > 0.0f)
                                       ? std::move(scene_state.selected_node_mask)
                                       : std::vector<bool>{},
+            .node_visibility_mask = std::move(scene_state.node_visibility_mask),
             .desaturate_unselected = settings_.desaturate_unselected,
             .selection_flash_intensity = getSelectionFlashIntensity(),
             .hovered_depth_id = nullptr,

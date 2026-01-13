@@ -138,10 +138,9 @@ namespace lfs::rendering {
                     const auto camera_model = request.equirectangular
                                                   ? GutCameraModel::EQUIRECTANGULAR
                                                   : GutCameraModel::PINHOLE;
-                    LOG_TRACE("GUT rasterizer: sh_degree {} -> {}", original_sh_degree, request.sh_degree);
                     auto render_output = gut_rasterize_tensor(
                         cam, const_cast<lfs::core::SplatData&>(model), background_,
-                        request.scaling_modifier, camera_model);
+                        request.scaling_modifier, camera_model, transform_indices_ptr, request.node_visibility_mask);
                     result.image = std::move(render_output.image);
                     result.depth = std::move(render_output.depth);
                 } else {
@@ -167,6 +166,7 @@ namespace lfs::rendering {
                                                            request.far_plane,
                                                            request.selected_node_mask,
                                                            request.desaturate_unselected,
+                                                           request.node_visibility_mask,
                                                            request.selection_flash_intensity,
                                                            request.orthographic,
                                                            request.ortho_scale,
@@ -197,7 +197,8 @@ namespace lfs::rendering {
                                               ? GutCameraModel::EQUIRECTANGULAR
                                               : GutCameraModel::PINHOLE;
                 auto render_output = gut_rasterize_tensor(
-                    cam, mutable_model, background_, request.scaling_modifier, camera_model);
+                    cam, mutable_model, background_, request.scaling_modifier, camera_model,
+                    transform_indices_ptr, request.node_visibility_mask);
                 return RenderResult{
                     .image = std::move(render_output.image),
                     .depth = std::move(render_output.depth),
@@ -207,7 +208,6 @@ namespace lfs::rendering {
             }
 
             // Use libtorch-free tensor-based rasterizer
-            LOG_TRACE("Using TENSOR_NATIVE backend (libtorch-free rasterizer)");
             Tensor screen_positions;
             auto [image, depth] = rasterize_tensor(cam, mutable_model, background_,
                                                    request.show_rings, request.ring_width,
@@ -228,6 +228,7 @@ namespace lfs::rendering {
                                                    request.far_plane,
                                                    request.selected_node_mask,
                                                    request.desaturate_unselected,
+                                                   request.node_visibility_mask,
                                                    request.selection_flash_intensity,
                                                    request.orthographic,
                                                    request.ortho_scale,
