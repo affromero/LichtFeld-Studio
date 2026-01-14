@@ -375,6 +375,11 @@ namespace lfs::rendering {
             if (use_fbo_interop_ && fbo_interop_texture_) {
                 Tensor image_hwc;
                 if (auto read_result = fbo_interop_texture_->readToTensor(image_hwc); read_result) {
+                    // FBO may be over-allocated for GPU alignment - crop to exact viewport size
+                    if (image_hwc.size(0) != static_cast<size_t>(height) ||
+                        image_hwc.size(1) != static_cast<size_t>(width)) {
+                        image_hwc = image_hwc.slice(0, 0, height).slice(1, 0, width).contiguous();
+                    }
                     result.image = image_hwc.permute({2, 0, 1}).contiguous();
                     result.valid = true;
                     result.external_depth_texture = persistent_depth_texture_;
@@ -569,6 +574,11 @@ namespace lfs::rendering {
             if (use_fbo_interop_ && fbo_interop_texture_) {
                 Tensor image_hwc;
                 if (auto read_result = fbo_interop_texture_->readToTensor(image_hwc); read_result) {
+                    // FBO may be over-allocated for GPU alignment - crop to exact viewport size
+                    if (image_hwc.size(0) != static_cast<size_t>(height) ||
+                        image_hwc.size(1) != static_cast<size_t>(width)) {
+                        image_hwc = image_hwc.slice(0, 0, height).slice(1, 0, width).contiguous();
+                    }
                     result.image = image_hwc.permute({2, 0, 1}).contiguous();
                     result.valid = true;
                     result.external_depth_texture = persistent_depth_texture_;
