@@ -921,9 +921,9 @@ namespace lfs::training {
             const int tile_height = full_height / tile_rows;
             const int num_tiles = tile_rows * tile_cols;
 
-            // Accumulate loss across tiles (keep on GPU until final sync)
-            lfs::core::Tensor loss_tensor_gpu;
-            RenderOutput r_output; // Last tile's output (for densification info)
+            core::Tensor loss_tensor_gpu = core::Tensor::zeros({1}, core::Device::CUDA);
+            RenderOutput r_output;
+            int tiles_processed = 0;
 
             // Loop over tiles (row-major order)
             for (int tile_idx = 0; tile_idx < num_tiles; ++tile_idx) {
@@ -1031,6 +1031,14 @@ namespace lfs::training {
 
                     output = std::move(rasterize_result->first);
                     fast_ctx.emplace(std::move(rasterize_result->second));
+
+                    if (fast_ctx->forward_ctx.n_visible_primitives == 0) {
+                        auto& arena = lfs::core::GlobalArenaManager::instance().get_arena();
+                        arena.end_frame(fast_ctx->forward_ctx.frame_id);
+                        nvtxRangePop();
+                        nvtxRangePop();
+                        continue;
+                    }
                 }
 
                 r_output = output; // Save last tile for densification
@@ -1095,11 +1103,8 @@ namespace lfs::training {
                 }
 
                 // Accumulate tile loss (stay on GPU)
-                if (tile_idx == 0) {
-                    loss_tensor_gpu = tile_loss;
-                } else {
-                    loss_tensor_gpu = loss_tensor_gpu + tile_loss;
-                }
+                loss_tensor_gpu = loss_tensor_gpu + tile_loss;
+                tiles_processed++;
                 nvtxRangePop();
 
                 // Backward through bilateral grid (accumulates gradients, no Adam yet)
@@ -1128,10 +1133,14 @@ namespace lfs::training {
                 nvtxRangePop(); // End tile
             }
 
-            // Average the loss across tiles for correct reporting
-            // (Gradients are already correct from accumulation, this is only for loss display)
-            if (num_tiles > 1) {
-                loss_tensor_gpu = loss_tensor_gpu / static_cast<float>(num_tiles);
+            if (tiles_processed > 1)
+                loss_tensor_gpu = loss_tensor_gpu / static_cast<float>(tiles_processed);
+
+            if (tiles_processed == 0) {
+                LOG_DEBUG("Skipping iteration {} - no visible primitives", iter);
+                return iter < params_.optimization.iterations && !stop_requested_.load() && !stop_token.stop_requested()
+                           ? StepResult::Continue
+                           : StepResult::Stop;
             }
 
             // Regularization losses are computed ONCE on full model (after all tiles)
@@ -1232,6 +1241,7 @@ namespace lfs::training {
                     .is_refining = strategy_->is_refining(iter)}
                     .emit();
             }
+
             {
                 DeferredEvents deferred;
                 {
@@ -1400,14 +1410,16 @@ namespace lfs::training {
                 if (callback_busy_.load())
                     cudaStreamSynchronize(callback_stream_);
 
+                lfs::core::Camera* cam = nullptr;
+                lfs::core::Tensor gt_image;
                 auto example_opt = train_dataloader->next();
                 if (!example_opt) {
                     LOG_ERROR("DataLoader returned nullopt unexpectedly");
                     break;
                 }
                 auto& example = *example_opt;
-                lfs::core::Camera* cam = example.data.camera;
-                lfs::core::Tensor gt_image = std::move(example.data.image);
+                cam = example.data.camera;
+                gt_image = std::move(example.data.image);
 
                 // Store pipelined mask for use in train_step
                 pipelined_mask_ = example.mask.has_value() ? std::move(*example.mask) : lfs::core::Tensor();
