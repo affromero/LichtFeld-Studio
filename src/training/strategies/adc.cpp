@@ -428,12 +428,17 @@ namespace lfs::training {
                     num_duplicates = available;
                     num_split = 0;
                     // Limit is_duplicated to first 'available' true values
-                    auto indices = is_duplicated.nonzero().squeeze(-1);
-                    if (indices.numel() > available) {
-                        auto keep_indices = indices.slice(0, 0, available);
+                    if (available > 0) {
+                        auto indices = is_duplicated.nonzero().squeeze(-1);
+                        if (indices.numel() > available) {
+                            auto keep_indices = indices.slice(0, 0, available);
+                            is_duplicated = lfs::core::Tensor::zeros_bool({static_cast<size_t>(current_n)}, is_duplicated.device());
+                            auto true_vals = lfs::core::Tensor::ones_bool({static_cast<size_t>(available)}, is_duplicated.device());
+                            is_duplicated.index_put_(keep_indices, true_vals);
+                        }
+                    } else {
+                        // No room for any duplicates - zero out the mask entirely
                         is_duplicated = lfs::core::Tensor::zeros_bool({static_cast<size_t>(current_n)}, is_duplicated.device());
-                        auto true_vals = lfs::core::Tensor::ones_bool({static_cast<size_t>(available)}, is_duplicated.device());
-                        is_duplicated.index_put_(keep_indices, true_vals);
                     }
                     is_split = lfs::core::Tensor::zeros_bool({static_cast<size_t>(current_n)}, is_split.device());
                 } else {
@@ -441,12 +446,17 @@ namespace lfs::training {
                     const int64_t remaining = available - num_duplicates;
                     num_split = remaining;
                     // Limit is_split to first 'remaining' true values
-                    auto indices = is_split.nonzero().squeeze(-1);
-                    if (indices.numel() > remaining) {
-                        auto keep_indices = indices.slice(0, 0, remaining);
+                    if (remaining > 0) {
+                        auto indices = is_split.nonzero().squeeze(-1);
+                        if (indices.numel() > remaining) {
+                            auto keep_indices = indices.slice(0, 0, remaining);
+                            is_split = lfs::core::Tensor::zeros_bool({static_cast<size_t>(current_n)}, is_split.device());
+                            auto true_vals = lfs::core::Tensor::ones_bool({static_cast<size_t>(remaining)}, is_split.device());
+                            is_split.index_put_(keep_indices, true_vals);
+                        }
+                    } else {
+                        // No room for splits - zero out the mask entirely
                         is_split = lfs::core::Tensor::zeros_bool({static_cast<size_t>(current_n)}, is_split.device());
-                        auto true_vals = lfs::core::Tensor::ones_bool({static_cast<size_t>(remaining)}, is_split.device());
-                        is_split.index_put_(keep_indices, true_vals);
                     }
                 }
                 LOG_DEBUG("max_cap enforcement: limited growth from {} to {} new Gaussians", potential_new, available);
