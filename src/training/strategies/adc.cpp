@@ -40,6 +40,37 @@ namespace lfs::training {
         _optimizer->allocate_gradients(_params->max_cap > 0 ? static_cast<size_t>(_params->max_cap) : 0);
         _scheduler = create_scheduler(*_params, *_optimizer);
 
+        // Initialize ReduceLROnPlateau scheduler if enabled
+        if (_params->reduce_lr_on_plateau.enabled) {
+            ReduceLROnPlateau::Config plateau_config;
+
+            // Parse metric
+            if (_params->reduce_lr_on_plateau.metric == "ssim") {
+                plateau_config.metric = PlateauMetric::SSIM;
+            } else {
+                plateau_config.metric = PlateauMetric::PSNR;
+            }
+
+            // Parse mode
+            if (_params->reduce_lr_on_plateau.mode == "min") {
+                plateau_config.mode = PlateauMode::Min;
+            } else {
+                plateau_config.mode = PlateauMode::Max;
+            }
+
+            plateau_config.factor = _params->reduce_lr_on_plateau.factor;
+            plateau_config.patience = _params->reduce_lr_on_plateau.patience;
+            plateau_config.min_lr = _params->reduce_lr_on_plateau.min_lr;
+            plateau_config.threshold = _params->reduce_lr_on_plateau.threshold;
+            plateau_config.cooldown = _params->reduce_lr_on_plateau.cooldown;
+
+            _plateau_scheduler = std::make_unique<ReduceLROnPlateau>(*_optimizer, plateau_config);
+            LOG_INFO("ReduceLROnPlateau scheduler enabled: metric={}, patience={}, factor={}",
+                     _params->reduce_lr_on_plateau.metric,
+                     _params->reduce_lr_on_plateau.patience,
+                     _params->reduce_lr_on_plateau.factor);
+        }
+
         // Initialize densification info: [2, N] tensor for tracking gradients
         _splat_data->_densification_info = lfs::core::Tensor::zeros(
             {2, static_cast<size_t>(_splat_data->size())},
@@ -585,7 +616,7 @@ namespace lfs::training {
 
     namespace {
         constexpr uint32_t DEFAULT_MAGIC = 0x4C464446; // "LFDF"
-        constexpr uint32_t DEFAULT_VERSION = 2;        // v2 adds free_mask serialization
+        constexpr uint32_t DEFAULT_VERSION = 3;        // v3 adds ReduceLROnPlateau (v2 added free_mask)
     } // namespace
 
     void ADC::serialize(std::ostream& os) const {
@@ -620,6 +651,16 @@ namespace lfs::training {
         } else {
             uint8_t has_free_mask = 0;
             os.write(reinterpret_cast<const char*>(&has_free_mask), sizeof(has_free_mask));
+        }
+
+        // Serialize ReduceLROnPlateau scheduler state (v3+)
+        if (_plateau_scheduler) {
+            uint8_t has_plateau_scheduler = 1;
+            os.write(reinterpret_cast<const char*>(&has_plateau_scheduler), sizeof(has_plateau_scheduler));
+            _plateau_scheduler->serialize(os);
+        } else {
+            uint8_t has_plateau_scheduler = 0;
+            os.write(reinterpret_cast<const char*>(&has_plateau_scheduler), sizeof(has_plateau_scheduler));
         }
 
         LOG_DEBUG("Serialized AdcStrategy");
@@ -661,6 +702,15 @@ namespace lfs::training {
                 if (_splat_data->means().device() == lfs::core::Device::CUDA) {
                     _free_mask = _free_mask.cuda();
                 }
+            }
+        }
+
+        // Deserialize ReduceLROnPlateau scheduler state (v3+)
+        if (version >= 3) {
+            uint8_t has_plateau_scheduler;
+            is.read(reinterpret_cast<char*>(&has_plateau_scheduler), sizeof(has_plateau_scheduler));
+            if (has_plateau_scheduler && _plateau_scheduler) {
+                _plateau_scheduler->deserialize(is);
             }
         }
 

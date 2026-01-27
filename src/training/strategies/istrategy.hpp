@@ -12,6 +12,9 @@
 
 namespace lfs::training {
 
+    // Forward declarations
+    class ReduceLROnPlateau;
+
     /**
      * @brief Strategy interface for Gaussian splatting optimization.
      *
@@ -50,5 +53,10 @@ namespace lfs::training {
 
         // Reserve optimizer capacity for future growth (e.g., after checkpoint load)
         virtual void reserve_optimizer_capacity(size_t capacity) = 0;
+
+        // Get the ReduceLROnPlateau scheduler (if enabled)
+        // Returns nullptr by default; strategies override if they support it
+        virtual ReduceLROnPlateau* get_plateau_scheduler() { return nullptr; }
+        virtual const ReduceLROnPlateau* get_plateau_scheduler() const { return nullptr; }
     };
 } // namespace lfs::training

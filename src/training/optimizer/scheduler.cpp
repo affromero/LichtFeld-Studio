@@ -5,7 +5,9 @@
 #include "scheduler.hpp"
 #include "adam_optimizer.hpp"
 #include "core/logger.hpp"
+#include "metrics/metrics.hpp"
 #include <cmath>
+#include <limits>
 #include <string>
 #include <unordered_map>
 
@@ -248,6 +250,159 @@ namespace lfs::training {
         }
 
         LOG_DEBUG("Deserialized WarmupExponentialLR: step={}, initial_lr={}", current_step_, initial_lr_);
+    }
+
+    // ===== ReduceLROnPlateau Implementation =====
+
+    namespace {
+        constexpr uint32_t SCHED_PLATEAU_MAGIC = 0x4C465350; // "LFSP"
+        constexpr uint32_t SCHED_PLATEAU_VERSION = 1;
+    } // namespace
+
+    ReduceLROnPlateau::ReduceLROnPlateau(AdamOptimizer& optimizer, const Config& config)
+        : optimizer_(optimizer),
+          config_(config),
+          best_metric_(config.mode == PlateauMode::Max
+                           ? -std::numeric_limits<double>::infinity()
+                           : std::numeric_limits<double>::infinity()),
+          bad_evals_(0),
+          cooldown_counter_(0),
+          initialized_(false) {
+    }
+
+    double ReduceLROnPlateau::extract_metric(const EvalMetrics& metrics) const {
+        switch (config_.metric) {
+            case PlateauMetric::PSNR:
+                return static_cast<double>(metrics.psnr);
+            case PlateauMetric::SSIM:
+                return static_cast<double>(metrics.ssim);
+            default:
+                return static_cast<double>(metrics.psnr);
+        }
+    }
+
+    bool ReduceLROnPlateau::is_better(double current, double best) const {
+        if (config_.mode == PlateauMode::Max) {
+            return current > best + config_.threshold;
+        } else {
+            return current < best - config_.threshold;
+        }
+    }
+
+    bool ReduceLROnPlateau::step(const EvalMetrics& metrics) {
+        const double current_metric = extract_metric(metrics);
+
+        // Initialize best metric on first call
+        if (!initialized_) {
+            best_metric_ = current_metric;
+            initialized_ = true;
+            LOG_DEBUG("ReduceLROnPlateau: Initialized with {} = {:.4f}",
+                      config_.metric == PlateauMetric::PSNR ? "PSNR" : "SSIM",
+                      current_metric);
+            return false;
+        }
+
+        // Handle cooldown period after LR reduction
+        if (cooldown_counter_ > 0) {
+            cooldown_counter_--;
+            LOG_DEBUG("ReduceLROnPlateau: In cooldown ({} remaining)", cooldown_counter_);
+            return false;
+        }
+
+        // Check if metric improved
+        if (is_better(current_metric, best_metric_)) {
+            best_metric_ = current_metric;
+            bad_evals_ = 0;
+            LOG_DEBUG("ReduceLROnPlateau: Metric improved to {:.4f}", current_metric);
+            return false;
+        }
+
+        // Metric did not improve
+        bad_evals_++;
+        LOG_DEBUG("ReduceLROnPlateau: No improvement ({}/{} bad evals), current={:.4f}, best={:.4f}",
+                  bad_evals_, config_.patience, current_metric, best_metric_);
+
+        // Check if patience exceeded
+        if (bad_evals_ >= config_.patience) {
+            // Reduce learning rate
+            double current_lr = optimizer_.get_lr();
+            double new_lr = std::max(current_lr * config_.factor, config_.min_lr);
+
+            if (new_lr < current_lr) {
+                optimizer_.set_lr(static_cast<float>(new_lr));
+                LOG_INFO("ReduceLROnPlateau: Reducing LR from {:.2e} to {:.2e} (no improvement for {} evals)",
+                         current_lr, new_lr, config_.patience);
+
+                // Reset counters and enter cooldown
+                bad_evals_ = 0;
+                cooldown_counter_ = config_.cooldown;
+                return true;
+            } else {
+                LOG_DEBUG("ReduceLROnPlateau: LR already at minimum ({:.2e})", config_.min_lr);
+            }
+        }
+
+        return false;
+    }
+
+    void ReduceLROnPlateau::serialize(std::ostream& os) const {
+        os.write(reinterpret_cast<const char*>(&SCHED_PLATEAU_MAGIC), sizeof(SCHED_PLATEAU_MAGIC));
+        os.write(reinterpret_cast<const char*>(&SCHED_PLATEAU_VERSION), sizeof(SCHED_PLATEAU_VERSION));
+
+        // Serialize config
+        uint8_t metric = static_cast<uint8_t>(config_.metric);
+        uint8_t mode = static_cast<uint8_t>(config_.mode);
+        os.write(reinterpret_cast<const char*>(&metric), sizeof(metric));
+        os.write(reinterpret_cast<const char*>(&mode), sizeof(mode));
+        os.write(reinterpret_cast<const char*>(&config_.factor), sizeof(config_.factor));
+        os.write(reinterpret_cast<const char*>(&config_.patience), sizeof(config_.patience));
+        os.write(reinterpret_cast<const char*>(&config_.min_lr), sizeof(config_.min_lr));
+        os.write(reinterpret_cast<const char*>(&config_.threshold), sizeof(config_.threshold));
+        os.write(reinterpret_cast<const char*>(&config_.cooldown), sizeof(config_.cooldown));
+
+        // Serialize state
+        os.write(reinterpret_cast<const char*>(&best_metric_), sizeof(best_metric_));
+        os.write(reinterpret_cast<const char*>(&bad_evals_), sizeof(bad_evals_));
+        os.write(reinterpret_cast<const char*>(&cooldown_counter_), sizeof(cooldown_counter_));
+        uint8_t initialized = initialized_ ? 1 : 0;
+        os.write(reinterpret_cast<const char*>(&initialized), sizeof(initialized));
+
+        LOG_DEBUG("Serialized ReduceLROnPlateau: best={:.4f}, bad_evals={}", best_metric_, bad_evals_);
+    }
+
+    void ReduceLROnPlateau::deserialize(std::istream& is) {
+        uint32_t magic, version;
+        is.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        is.read(reinterpret_cast<char*>(&version), sizeof(version));
+
+        if (magic != SCHED_PLATEAU_MAGIC) {
+            throw std::runtime_error("Invalid ReduceLROnPlateau checkpoint: wrong magic");
+        }
+        if (version != SCHED_PLATEAU_VERSION) {
+            throw std::runtime_error("Unsupported ReduceLROnPlateau checkpoint version");
+        }
+
+        // Deserialize config
+        uint8_t metric, mode;
+        is.read(reinterpret_cast<char*>(&metric), sizeof(metric));
+        is.read(reinterpret_cast<char*>(&mode), sizeof(mode));
+        config_.metric = static_cast<PlateauMetric>(metric);
+        config_.mode = static_cast<PlateauMode>(mode);
+        is.read(reinterpret_cast<char*>(&config_.factor), sizeof(config_.factor));
+        is.read(reinterpret_cast<char*>(&config_.patience), sizeof(config_.patience));
+        is.read(reinterpret_cast<char*>(&config_.min_lr), sizeof(config_.min_lr));
+        is.read(reinterpret_cast<char*>(&config_.threshold), sizeof(config_.threshold));
+        is.read(reinterpret_cast<char*>(&config_.cooldown), sizeof(config_.cooldown));
+
+        // Deserialize state
+        is.read(reinterpret_cast<char*>(&best_metric_), sizeof(best_metric_));
+        is.read(reinterpret_cast<char*>(&bad_evals_), sizeof(bad_evals_));
+        is.read(reinterpret_cast<char*>(&cooldown_counter_), sizeof(cooldown_counter_));
+        uint8_t initialized;
+        is.read(reinterpret_cast<char*>(&initialized), sizeof(initialized));
+        initialized_ = initialized != 0;
+
+        LOG_DEBUG("Deserialized ReduceLROnPlateau: best={:.4f}, bad_evals={}", best_metric_, bad_evals_);
     }
 
 } // namespace lfs::training
