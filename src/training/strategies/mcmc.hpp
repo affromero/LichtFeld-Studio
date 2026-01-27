@@ -42,6 +42,8 @@ namespace lfs::training {
         const AdamOptimizer& get_optimizer() const override { return *_optimizer; }
         ExponentialLR* get_scheduler() { return _scheduler.get(); }
         const ExponentialLR* get_scheduler() const { return _scheduler.get(); }
+        ReduceLROnPlateau* get_plateau_scheduler() override { return _plateau_scheduler.get(); }
+        const ReduceLROnPlateau* get_plateau_scheduler() const override { return _plateau_scheduler.get(); }
 
         // Serialization for checkpoints
         void serialize(std::ostream& os) const override;
@@ -69,6 +71,7 @@ namespace lfs::training {
         // Member variables
         std::unique_ptr<AdamOptimizer> _optimizer;
         std::unique_ptr<ExponentialLR> _scheduler;
+        std::unique_ptr<ReduceLROnPlateau> _plateau_scheduler;
         lfs::core::SplatData* _splat_data = nullptr; // Scene-owned
         std::unique_ptr<const lfs::core::param::OptimizationParameters> _params;
 
