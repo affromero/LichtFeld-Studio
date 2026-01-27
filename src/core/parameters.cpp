@@ -159,6 +159,7 @@ namespace lfs::core {
             opt_json["sh_degree"] = sh_degree;
             opt_json["opacity_reg"] = opacity_reg;
             opt_json["scale_reg"] = scale_reg;
+            opt_json["position_reg"] = position_reg;
             opt_json["init_opacity"] = init_opacity;
             opt_json["init_scaling"] = init_scaling;
             opt_json["max_cap"] = max_cap;
@@ -230,6 +231,7 @@ namespace lfs::core {
             p.stop_refine = 15'000;
             p.opacity_reg = 0.0f;
             p.scale_reg = 0.0f;
+            p.position_reg = 0.0f;
             p.init_opacity = 0.1f;
             p.max_cap = 6'000'000;
             p.tv_loss_weight = 5.0f;
@@ -258,6 +260,9 @@ namespace lfs::core {
             }
             if (json.contains("scale_reg")) {
                 params.scale_reg = json["scale_reg"];
+            }
+            if (json.contains("position_reg")) {
+                params.position_reg = json["position_reg"];
             }
             if (json.contains("init_opacity")) {
                 params.init_opacity = json["init_opacity"];

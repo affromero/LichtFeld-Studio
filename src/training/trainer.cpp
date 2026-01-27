@@ -255,6 +255,25 @@ namespace lfs::training {
         return lfs::training::losses::OpacityRegularization::forward(splatData.opacity_raw(), optimizer.get_grad(ParamType::Opacity), params);
     }
 
+    // Returns GPU tensor for loss - NO SYNC!
+    std::expected<lfs::core::Tensor, std::string> Trainer::compute_position_reg_loss(
+        lfs::core::SplatData& splatData,
+        AdamOptimizer& optimizer,
+        const lfs::core::param::OptimizationParameters& opt_params) {
+        // Position regularization requires init_means_ to be set
+        if (!init_means_.is_valid() || init_means_.shape()[0] == 0) {
+            return lfs::core::Tensor::zeros({1}, lfs::core::Device::CUDA);
+        }
+        // Handle size mismatch (Gaussians may have been added/removed during training)
+        if (splatData.means().shape()[0] != init_means_.shape()[0]) {
+            // Skip position reg if sizes don't match (e.g., after densification)
+            return lfs::core::Tensor::zeros({1}, lfs::core::Device::CUDA);
+        }
+        lfs::training::losses::PositionRegularization::Params params{.weight = opt_params.position_reg};
+        return lfs::training::losses::PositionRegularization::forward(
+            splatData.means(), init_means_, optimizer.get_grad(ParamType::Means), params);
+    }
+
     std::expected<std::pair<lfs::core::Tensor, SparsityLossContext>, std::string>
     Trainer::compute_sparsity_loss_forward(const int iter, const lfs::core::SplatData& splat_data) {
         if (!sparsity_optimizer_ || !sparsity_optimizer_->should_apply_loss(iter)) {
@@ -1493,6 +1512,17 @@ namespace lfs::training {
                 nvtxRangePop();
             }
 
+            // Position regularization loss - penalizes drift from initial positions
+            if (params_.optimization.position_reg > 0.0f) {
+                nvtxRangePush("compute_position_reg_loss");
+                auto position_loss_result = compute_position_reg_loss(strategy_->get_model(), strategy_->get_optimizer(), params_.optimization);
+                if (!position_loss_result) {
+                    return std::unexpected(position_loss_result.error());
+                }
+                loss_tensor_gpu = loss_tensor_gpu + *position_loss_result;
+                nvtxRangePop();
+            }
+
             // Bilateral grid: TV loss + optimizer step
             if (bilateral_grid_ && params_.optimization.use_bilateral_grid) {
                 nvtxRangePush("bilateral_grid_tv_and_step");
@@ -1840,6 +1870,13 @@ namespace lfs::training {
                 progress_->update(iter, current_loss_.load(),
                                   static_cast<int>(strategy_->get_model().size()),
                                   strategy_->is_refining(iter));
+            }
+
+            // Store initial means for position regularization (only on fresh training start)
+            if (params_.optimization.position_reg > 0.0f && iter == 1) {
+                init_means_ = strategy_->get_model().means().clone();
+                LOG_INFO("Position regularization enabled (weight={}), stored {} initial positions",
+                         params_.optimization.position_reg, init_means_.shape()[0]);
             }
 
             // Conservative prefetch to avoid VRAM exhaustion

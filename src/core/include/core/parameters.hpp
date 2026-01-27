@@ -81,6 +81,7 @@ namespace lfs::core {
             int sh_degree = 3;
             float opacity_reg = 0.01f;
             float scale_reg = 0.01f;
+            float position_reg = 0.0f;  // Position regularization (L2 penalty on means drift)
             float init_opacity = 0.5f;
             float init_scaling = 0.1f;
             int max_cap = 1000000;

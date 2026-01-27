@@ -66,4 +66,34 @@ namespace lfs::training::losses {
             const Params& params);
     };
 
+    /**
+     * @brief L2 regularization on position drift from initial positions
+     *
+     * Forward:  diff = means - init_means
+     * Loss:     L = weight * mean(||diff||²)
+     * Gradient: ∂L/∂means = (2 * weight / N) * (means - init_means)
+     *
+     * NOTE: This loss writes gradients directly to means_grad in-place
+     */
+    struct PositionRegularization {
+        struct Params {
+            float weight; ///< Regularization weight
+        };
+
+        /**
+         * @brief Compute position regularization loss and accumulate gradients
+         * @param means [N, 3] current Gaussian positions
+         * @param init_means [N, 3] initial Gaussian positions (reference)
+         * @param means_grad [N, 3] gradient tensor (will be accumulated to)
+         * @param params Loss parameters
+         * @return loss_tensor (GPU) or error - loss stays on GPU!
+         * @note Accumulates gradients directly to means_grad
+         */
+        static std::expected<lfs::core::Tensor, std::string> forward(
+            const lfs::core::Tensor& means,
+            const lfs::core::Tensor& init_means,
+            lfs::core::Tensor& means_grad,
+            const Params& params);
+    };
+
 } // namespace lfs::training::losses

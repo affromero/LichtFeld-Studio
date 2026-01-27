@@ -184,6 +184,13 @@ namespace lfs::training {
             AdamOptimizer& optimizer,
             const lfs::core::param::OptimizationParameters& opt_params);
 
+        // Returns GPU tensor for loss (avoid sync!)
+        // Penalizes Gaussians drifting from their initial positions
+        std::expected<lfs::core::Tensor, std::string> compute_position_reg_loss(
+            lfs::core::SplatData& splatData,
+            AdamOptimizer& optimizer,
+            const lfs::core::param::OptimizationParameters& opt_params);
+
         // Sparsity optimization - returns GPU tensor (no CPU sync)
         std::expected<std::pair<lfs::core::Tensor, SparsityLossContext>, std::string> compute_sparsity_loss_forward(
             const int iter, const lfs::core::SplatData& splat_data);
@@ -316,6 +323,12 @@ namespace lfs::training {
         std::function<void()> callback_;
         std::atomic<bool> callback_busy_{false};
         cudaStream_t callback_stream_ = nullptr;
+
+        // ============================================================================
+        // Position Regularization State
+        // ============================================================================
+
+        lfs::core::Tensor init_means_;  ///< [N, 3] Initial Gaussian positions for position_reg loss
 
         // ============================================================================
         // G3S Geometric Regularization State
