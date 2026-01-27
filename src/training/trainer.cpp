@@ -23,6 +23,7 @@
 #include "rasterization/gsplat_rasterizer.hpp"
 #include "strategies/adc.hpp"
 #include "strategies/mcmc.hpp"
+#include "optimizer/scheduler.hpp"
 #include "training/kernels/grad_alpha.hpp"
 #include "visualizer/scene/scene.hpp"
 
@@ -1731,6 +1732,14 @@ namespace lfs::training {
                                                         val_dataset_,
                                                         background_);
                     LOG_INFO("{}", metrics.to_string());
+
+                    // Notify ReduceLROnPlateau scheduler if enabled
+                    if (auto* plateau_scheduler = strategy_->get_plateau_scheduler()) {
+                        if (plateau_scheduler->step(metrics)) {
+                            LOG_INFO("Learning rate reduced to {:.2e} due to plateau",
+                                     strategy_->get_optimizer().get_lr());
+                        }
+                    }
                 }
 
                 // Save checkpoint (not PLY) at specified steps

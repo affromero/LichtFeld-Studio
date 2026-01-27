@@ -48,6 +48,22 @@ namespace lfs::core {
             static G3SParameters from_json(const nlohmann::json& j);
         };
 
+        // ReduceLROnPlateau scheduler parameters
+        // Reduces learning rate when a metric has stopped improving
+        struct ReduceLROnPlateauParameters {
+            bool enabled = false;            ///< Enable ReduceLROnPlateau scheduler
+            std::string metric = "psnr";     ///< Metric to monitor: "psnr" or "ssim"
+            std::string mode = "max";        ///< Mode: "max" (higher=better) or "min" (lower=better)
+            double factor = 0.5;             ///< Factor to multiply LR by when plateau detected
+            int patience = 3;                ///< Number of evaluations without improvement before reducing LR
+            double min_lr = 1e-7;            ///< Minimum learning rate floor
+            double threshold = 0.01;         ///< Minimum delta to count as improvement
+            int cooldown = 0;                ///< Evaluations to wait after LR reduction before monitoring
+
+            nlohmann::json to_json() const;
+            static ReduceLROnPlateauParameters from_json(const nlohmann::json& j);
+        };
+
         struct OptimizationParameters {
             size_t iterations = 30'000;
             size_t sh_degree_interval = 1'000;
@@ -81,6 +97,9 @@ namespace lfs::core {
 
             // G³S geometric regularization parameters
             G3SParameters g3s;
+
+            // ReduceLROnPlateau scheduler parameters
+            ReduceLROnPlateauParameters reduce_lr_on_plateau;
 
             // Mask parameters
             MaskMode mask_mode = MaskMode::None;      // Attention mask mode
