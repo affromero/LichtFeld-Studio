@@ -317,13 +317,18 @@ namespace lfs::training {
             break;
 
         case GsplatRenderMode::RGB_D:
-            final_image = render_colors_tensor.slice(-1, 0, 3);
-            final_depth = render_colors_tensor.slice(-1, 3, 4);
+            // render_colors_tensor is [C, H, W, channels], last dim is index 3
+            // NOTE: slice() takes size_t dim, so -1 becomes SIZE_MAX (18446744073709551615)
+            // causing "Slice dimension out of range" errors. Use explicit index instead.
+            final_image = render_colors_tensor.slice(3, 0, 3);
+            final_depth = render_colors_tensor.slice(3, 3, 4);
             break;
 
         case GsplatRenderMode::RGB_ED:
-            final_image = render_colors_tensor.slice(-1, 0, 3);
-            auto accum_depth = render_colors_tensor.slice(-1, 3, 4);
+            // render_colors_tensor is [C, H, W, channels], last dim is index 3
+            // NOTE: slice() takes size_t dim - cannot use -1 for last dimension
+            final_image = render_colors_tensor.slice(3, 0, 3);
+            auto accum_depth = render_colors_tensor.slice(3, 3, 4);
             final_depth = accum_depth.div(render_alphas_tensor.clamp_min(1e-10f));
             break;
         }

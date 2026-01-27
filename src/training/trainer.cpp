@@ -336,12 +336,16 @@ namespace lfs::training {
         }
 
         // Find neighbor based on viewpoint similarity
-        // Get reference camera position (Tensor -> raw pointer for math)
-        const float* ref_pos_ptr = ref_cam.cam_position_ptr();
+        // NOTE: Camera tensors (R, cam_position) are on CUDA, must copy to CPU before dereferencing
+
+        // Get reference camera position
+        auto ref_pos_cpu = ref_cam.cam_position().cpu();
+        const float* ref_pos_ptr = ref_pos_cpu.ptr<float>();
 
         // Extract forward direction from rotation matrix (negative Z axis in camera space)
         // R is 3x3, forward = -R[:,2] (third column negated)
-        const float* ref_R_ptr = ref_cam.R().ptr<float>();
+        auto ref_R_cpu = ref_cam.R().cpu();
+        const float* ref_R_ptr = ref_R_cpu.ptr<float>();
         float ref_forward[3] = {-ref_R_ptr[2], -ref_R_ptr[5], -ref_R_ptr[8]};
 
         lfs::core::Camera* best_neighbor = nullptr;
@@ -354,7 +358,8 @@ namespace lfs::training {
         // Estimate scene extent from camera positions
         float scene_extent = 0.0f;
         for (const auto& cam : train_dataset_->get_cameras()) {
-            const float* cam_pos = cam->cam_position_ptr();
+            auto cam_pos_cpu = cam->cam_position().cpu();
+            const float* cam_pos = cam_pos_cpu.ptr<float>();
             float dx = cam_pos[0] - ref_pos_ptr[0];
             float dy = cam_pos[1] - ref_pos_ptr[1];
             float dz = cam_pos[2] - ref_pos_ptr[2];
@@ -369,7 +374,8 @@ namespace lfs::training {
             }
 
             // Compute distance
-            const float* cam_pos = cam->cam_position_ptr();
+            auto cam_pos_cpu = cam->cam_position().cpu();
+            const float* cam_pos = cam_pos_cpu.ptr<float>();
             float dx = cam_pos[0] - ref_pos_ptr[0];
             float dy = cam_pos[1] - ref_pos_ptr[1];
             float dz = cam_pos[2] - ref_pos_ptr[2];
@@ -379,7 +385,9 @@ namespace lfs::training {
             }
 
             // Compute angular similarity (cosine of angle between forward vectors)
-            const float* cam_R_ptr = cam->R().ptr<float>();
+            // NOTE: R() may be on CUDA, must copy to CPU before dereferencing
+            auto cam_R_cpu = cam->R().cpu();
+            const float* cam_R_ptr = cam_R_cpu.ptr<float>();
             float cam_forward[3] = {-cam_R_ptr[2], -cam_R_ptr[5], -cam_R_ptr[8]};
             const float angular_sim = ref_forward[0]*cam_forward[0] +
                                       ref_forward[1]*cam_forward[1] +
@@ -1474,6 +1482,15 @@ namespace lfs::training {
                 }
                 nvtxRangePop();
 
+                // NOTE: G³S stochastic median depth (compute_g3s_losses) requires gsplat_ctx
+                // which is available here. However, calling it per-tile causes incorrect
+                // loss accumulation, and the current rasterizer backward doesn't support
+                // depth gradients. For now, G³S uses expected depth smoothness (see below).
+                // TODO: Implement proper G³S integration with:
+                //   1. Single-tile mode requirement (num_tiles == 1) for full-image G³S
+                //   2. Extend gsplat_rasterize_backward() to accept grad_depth
+                //   3. Call compute_g3s_losses() with proper gradient flow
+
                 nvtxRangePop(); // End tile
             }
 
@@ -1537,9 +1554,11 @@ namespace lfs::training {
                 nvtxRangePop();
             }
 
-            // G³S geometric regularization losses
-            // NOTE: G3S requires depth rendering, which is currently only supported with --gut mode.
-            // The fast rasterizer does not output depth, so G3S will be skipped if not using GUT.
+            // G³S geometric regularization using expected depth smoothness
+            // NOTE: Full G³S with stochastic median depth (compute_g3s_losses) is not yet
+            // integrated due to: (1) tiling incompatibility, (2) rasterizer backward doesn't
+            // support depth gradients. This fallback uses edge-aware depth smoothness on the
+            // rendered expected depth, which provides geometric regularization.
             const bool g3s_active = params_.optimization.g3s.enabled &&
                                     iter >= params_.optimization.g3s.start_iteration;
 
@@ -1557,7 +1576,7 @@ namespace lfs::training {
 
                 // Log G3S activation on first iteration
                 if (iter == params_.optimization.g3s.start_iteration) {
-                    LOG_INFO("[G3S] ✓ Geometric regularization ACTIVATED at iteration {}", iter);
+                    LOG_INFO("[G3S] ✓ Depth smoothness regularization ACTIVATED at iteration {}", iter);
                     LOG_INFO("[G3S]   Depth smoothness weight: {}", params_.optimization.g3s.depth_loss_weight);
                     LOG_INFO("[G3S]   Normal consistency weight: {}", params_.optimization.g3s.normal_consistency_weight);
                     LOG_INFO("[G3S]   Multi-view weight: {}", params_.optimization.g3s.multiview_weight);
@@ -1568,8 +1587,14 @@ namespace lfs::training {
                 static float g3s_mv_loss_acc = 0.0f;
                 static int g3s_sample_count = 0;
 
+                // Prepare depth and image tensors for G³S losses
+                // GUT rasterizer outputs [1, H, W] depth and [C, H, W] image
+                // G³S losses expect [H, W] depth and [H, W, C] image
+                auto g3s_depth = r_output.depth.squeeze(0);  // [1, H, W] -> [H, W]
+                auto g3s_image = r_output.image.permute({1, 2, 0});  // [C, H, W] -> [H, W, C]
+
                 // Compute depth smoothness loss using rendered expected depth
-                // This provides geometric regularization even without full G3S median depth
+                // This provides geometric regularization without requiring full G3S median depth
                 if (params_.optimization.g3s.depth_loss_weight > 0.0f) {
                     if (!depth_loss_) {
                         depth_loss_ = std::make_unique<losses::DepthLoss>();
@@ -1584,21 +1609,21 @@ namespace lfs::training {
 
                     // Create validity mask (valid where depth > min_depth)
                     auto valid_mask = lfs::core::Tensor::full(
-                        r_output.depth.shape(), 1.0f,
+                        g3s_depth.shape(), 1.0f,
                         lfs::core::Device::CUDA, lfs::core::DataType::Float32);
 
                     std::expected<std::pair<lfs::core::Tensor, losses::DepthLoss::Context>, std::string> depth_result;
 
-                    if (params_.optimization.g3s.use_edge_aware_smoothness && r_output.image.is_valid()) {
+                    if (params_.optimization.g3s.use_edge_aware_smoothness && g3s_image.is_valid()) {
                         depth_result = depth_loss_->forward_edge_aware(
-                            r_output.depth,
+                            g3s_depth,
                             lfs::core::Tensor(), // No GT depth
                             valid_mask,
-                            r_output.image,
+                            g3s_image,
                             depth_config);
                     } else {
                         depth_result = depth_loss_->forward(
-                            r_output.depth,
+                            g3s_depth,
                             lfs::core::Tensor(), // No GT depth
                             valid_mask,
                             depth_config);
@@ -1613,7 +1638,7 @@ namespace lfs::training {
                 }
 
                 // Multi-view geometric regularization (if neighbor view available)
-                if (params_.optimization.g3s.multiview_weight > 0.0f && r_output.image.is_valid()) {
+                if (params_.optimization.g3s.multiview_weight > 0.0f && g3s_image.is_valid()) {
                     if (!multiview_reg_) {
                         multiview_reg_ = std::make_unique<losses::MultiViewRegularization>();
                     }
@@ -1633,9 +1658,9 @@ namespace lfs::training {
                                 neighbor_image = neighbor_image.to(lfs::core::Device::CUDA);
                             }
 
-                            // Compute depth-derived normals
+                            // Compute depth-derived normals from [H, W] depth
                             auto depth_normals = losses::compute_depth_normals(
-                                r_output.depth, cam->focal_x(), cam->focal_y());
+                                g3s_depth, cam->focal_x(), cam->focal_y());
 
                             losses::MultiViewRegConfig mv_config;
                             mv_config.photometric_weight = params_.optimization.g3s.multiview_weight;
@@ -1644,8 +1669,8 @@ namespace lfs::training {
 
                             auto mv_result = multiview_reg_->compute_loss(
                                 *cam, *neighbor,
-                                r_output.depth, depth_normals,
-                                r_output.image, neighbor_image,
+                                g3s_depth, depth_normals,
+                                g3s_image, neighbor_image,
                                 mv_config);
 
                             if (mv_result) {
