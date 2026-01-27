@@ -37,6 +37,56 @@ namespace lfs::core {
             }
         } // namespace
 
+        // ============================================================================
+        // ReduceLROnPlateauParameters serialization
+        // ============================================================================
+
+        nlohmann::json ReduceLROnPlateauParameters::to_json() const {
+            nlohmann::json j;
+            j["enabled"] = enabled;
+            j["metric"] = metric;
+            j["mode"] = mode;
+            j["factor"] = factor;
+            j["patience"] = patience;
+            j["min_lr"] = min_lr;
+            j["threshold"] = threshold;
+            j["cooldown"] = cooldown;
+            return j;
+        }
+
+        ReduceLROnPlateauParameters ReduceLROnPlateauParameters::from_json(const nlohmann::json& j) {
+            ReduceLROnPlateauParameters params;
+            if (j.contains("enabled")) {
+                params.enabled = j["enabled"];
+            }
+            if (j.contains("metric")) {
+                params.metric = j["metric"];
+            }
+            if (j.contains("mode")) {
+                params.mode = j["mode"];
+            }
+            if (j.contains("factor")) {
+                params.factor = j["factor"];
+            }
+            if (j.contains("patience")) {
+                params.patience = j["patience"];
+            }
+            if (j.contains("min_lr")) {
+                params.min_lr = j["min_lr"];
+            }
+            if (j.contains("threshold")) {
+                params.threshold = j["threshold"];
+            }
+            if (j.contains("cooldown")) {
+                params.cooldown = j["cooldown"];
+            }
+            return params;
+        }
+
+        // ============================================================================
+        // OptimizationParameters serialization
+        // ============================================================================
+
         nlohmann::json OptimizationParameters::to_json() const {
 
             nlohmann::json opt_json;
@@ -113,6 +163,9 @@ namespace lfs::core {
             opt_json["mask_opacity_penalty_weight"] = mask_opacity_penalty_weight;
             opt_json["mask_opacity_penalty_power"] = mask_opacity_penalty_power;
             opt_json["mask_threshold"] = mask_threshold;
+
+            // ReduceLROnPlateau scheduler
+            opt_json["reduce_lr_on_plateau"] = reduce_lr_on_plateau.to_json();
 
             return opt_json;
         }
@@ -345,6 +398,11 @@ namespace lfs::core {
             }
             if (json.contains("mask_threshold")) {
                 params.mask_threshold = json["mask_threshold"];
+            }
+
+            // ReduceLROnPlateau scheduler
+            if (json.contains("reduce_lr_on_plateau")) {
+                params.reduce_lr_on_plateau = ReduceLROnPlateauParameters::from_json(json["reduce_lr_on_plateau"]);
             }
 
             return params;
