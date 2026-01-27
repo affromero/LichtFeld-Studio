@@ -17,7 +17,9 @@ namespace lfs::io {
 
 namespace lfs::training {
 
+    // Forward declarations
     class CameraDataset;
+    class ReduceLROnPlateau;
 
     /**
      * @brief Strategy interface for Gaussian splatting optimization.
@@ -67,5 +69,10 @@ namespace lfs::training {
         virtual void set_training_dataset(std::shared_ptr<CameraDataset>) {}
 
         virtual void set_image_loader(lfs::io::PipelinedImageLoader*) {}
+
+        // Get the ReduceLROnPlateau scheduler (if enabled)
+        // Returns nullptr by default; strategies override if they support it
+        virtual ReduceLROnPlateau* get_plateau_scheduler() { return nullptr; }
+        virtual const ReduceLROnPlateau* get_plateau_scheduler() const { return nullptr; }
     };
 } // namespace lfs::training

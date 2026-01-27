@@ -701,6 +701,37 @@ namespace lfs::training {
         ensure_densification_info_shape();
         _error_score_windows = 0;
 
+        // Initialize ReduceLROnPlateau scheduler if enabled
+        if (_params->reduce_lr_on_plateau.enabled) {
+            ReduceLROnPlateau::Config plateau_config;
+
+            // Parse metric
+            if (_params->reduce_lr_on_plateau.metric == "ssim") {
+                plateau_config.metric = PlateauMetric::SSIM;
+            } else {
+                plateau_config.metric = PlateauMetric::PSNR;
+            }
+
+            // Parse mode
+            if (_params->reduce_lr_on_plateau.mode == "min") {
+                plateau_config.mode = PlateauMode::Min;
+            } else {
+                plateau_config.mode = PlateauMode::Max;
+            }
+
+            plateau_config.factor = _params->reduce_lr_on_plateau.factor;
+            plateau_config.patience = _params->reduce_lr_on_plateau.patience;
+            plateau_config.min_lr = _params->reduce_lr_on_plateau.min_lr;
+            plateau_config.threshold = _params->reduce_lr_on_plateau.threshold;
+            plateau_config.cooldown = _params->reduce_lr_on_plateau.cooldown;
+
+            _plateau_scheduler = std::make_unique<ReduceLROnPlateau>(*_optimizer, plateau_config);
+            LOG_INFO("ReduceLROnPlateau scheduler enabled: metric={}, patience={}, factor={}",
+                     _params->reduce_lr_on_plateau.metric,
+                     _params->reduce_lr_on_plateau.patience,
+                     _params->reduce_lr_on_plateau.factor);
+        }
+
         LOG_INFO("MCMC strategy initialized with {} Gaussians", _splat_data->size());
     }
 
@@ -714,7 +745,7 @@ namespace lfs::training {
 
     namespace {
         constexpr uint32_t MCMC_MAGIC = 0x4C464D43; // "LFMC"
-        constexpr uint32_t MCMC_VERSION = 1;
+        constexpr uint32_t MCMC_VERSION = 2;        // v2: added ReduceLROnPlateau
     } // namespace
 
     void MCMC::serialize(std::ostream& os) const {
@@ -741,6 +772,16 @@ namespace lfs::training {
             os.write(reinterpret_cast<const char*>(&has_scheduler), sizeof(has_scheduler));
         }
 
+        // Serialize ReduceLROnPlateau scheduler state (v2+)
+        if (_plateau_scheduler) {
+            uint8_t has_plateau_scheduler = 1;
+            os.write(reinterpret_cast<const char*>(&has_plateau_scheduler), sizeof(has_plateau_scheduler));
+            _plateau_scheduler->serialize(os);
+        } else {
+            uint8_t has_plateau_scheduler = 0;
+            os.write(reinterpret_cast<const char*>(&has_plateau_scheduler), sizeof(has_plateau_scheduler));
+        }
+
         LOG_DEBUG("Serialized MCMC strategy");
     }
 
@@ -752,7 +793,7 @@ namespace lfs::training {
         if (magic != MCMC_MAGIC) {
             throw std::runtime_error("Invalid MCMC checkpoint: wrong magic");
         }
-        if (version != MCMC_VERSION) {
+        if (version > MCMC_VERSION) {
             throw std::runtime_error("Unsupported MCMC checkpoint version: " + std::to_string(version));
         }
 
@@ -768,6 +809,15 @@ namespace lfs::training {
         is.read(reinterpret_cast<char*>(&has_scheduler), sizeof(has_scheduler));
         if (has_scheduler && _scheduler) {
             _scheduler->deserialize(is);
+        }
+
+        // Deserialize ReduceLROnPlateau scheduler state (v2+)
+        if (version >= 2) {
+            uint8_t has_plateau_scheduler;
+            is.read(reinterpret_cast<char*>(&has_plateau_scheduler), sizeof(has_plateau_scheduler));
+            if (has_plateau_scheduler && _plateau_scheduler) {
+                _plateau_scheduler->deserialize(is);
+            }
         }
 
         LOG_DEBUG("Deserialized MCMC strategy");

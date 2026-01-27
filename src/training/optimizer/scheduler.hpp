@@ -13,6 +13,9 @@ namespace lfs::training {
     class AdamOptimizer;  // Forward declaration
     enum class ParamType; // Forward declaration
 
+    // Forward declaration for EvalMetrics
+    struct EvalMetrics;
+
     /**
      * Simple Exponential Learning Rate Scheduler
      *
@@ -123,6 +126,93 @@ namespace lfs::training {
         int current_step_;
         double initial_lr_;
         std::vector<ParamType> params_to_update_; // Empty = only global LR
+    };
+
+    /**
+     * Metric type for ReduceLROnPlateau scheduler
+     */
+    enum class PlateauMetric {
+        PSNR, // Peak Signal-to-Noise Ratio (higher is better)
+        SSIM  // Structural Similarity Index (higher is better)
+    };
+
+    /**
+     * Mode for determining if metric improved
+     */
+    enum class PlateauMode {
+        Max, // Higher values are better (PSNR, SSIM)
+        Min  // Lower values are better (loss)
+    };
+
+    /**
+     * ReduceLROnPlateau Learning Rate Scheduler
+     *
+     * Reduces learning rate when a metric has stopped improving.
+     * Unlike step-based schedulers, this is triggered by evaluation metrics.
+     *
+     * The scheduler monitors a specified metric (PSNR or SSIM) and reduces
+     * the learning rate by a factor when no improvement is seen for 'patience'
+     * number of evaluation cycles.
+     *
+     * Example:
+     *   AdamOptimizer optimizer(...);
+     *   ReduceLROnPlateau::Config config{
+     *       .metric = PlateauMetric::PSNR,
+     *       .mode = PlateauMode::Max,
+     *       .factor = 0.5,
+     *       .patience = 3,
+     *       .min_lr = 1e-7,
+     *       .threshold = 0.01,
+     *       .cooldown = 0
+     *   };
+     *   ReduceLROnPlateau scheduler(optimizer, config);
+     *
+     *   // After each evaluation:
+     *   if (scheduler.step(eval_metrics)) {
+     *       LOG_INFO("LR reduced due to plateau");
+     *   }
+     */
+    class ReduceLROnPlateau {
+    public:
+        struct Config {
+            PlateauMetric metric = PlateauMetric::PSNR;
+            PlateauMode mode = PlateauMode::Max;
+            double factor = 0.5;       // LR multiplier when plateau detected
+            int patience = 3;          // Evaluations without improvement before reducing LR
+            double min_lr = 1e-7;      // Floor for LR reduction
+            double threshold = 0.01;   // Minimum delta to count as improvement
+            int cooldown = 0;          // Evaluations to wait after LR reduction before resuming monitoring
+        };
+
+        ReduceLROnPlateau(AdamOptimizer& optimizer, const Config& config);
+
+        /**
+         * Step the scheduler with evaluation metrics.
+         * @param metrics The evaluation metrics from the current evaluation
+         * @return true if learning rate was reduced, false otherwise
+         */
+        bool step(const EvalMetrics& metrics);
+
+        // Accessors
+        double get_best_metric() const { return best_metric_; }
+        int get_bad_evals() const { return bad_evals_; }
+        int get_cooldown_counter() const { return cooldown_counter_; }
+        const Config& get_config() const { return config_; }
+
+        // Serialization for checkpoints
+        void serialize(std::ostream& os) const;
+        void deserialize(std::istream& is);
+
+    private:
+        bool is_better(double current, double best) const;
+        double extract_metric(const EvalMetrics& metrics) const;
+
+        AdamOptimizer& optimizer_;
+        Config config_;
+        double best_metric_;
+        int bad_evals_;
+        int cooldown_counter_;
+        bool initialized_;
     };
 
 } // namespace lfs::training
