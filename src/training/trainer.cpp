@@ -31,6 +31,7 @@
 #include "rasterization/fast_rasterizer.hpp"
 #include "rasterization/gsplat_rasterizer.hpp"
 #include "strategies/mcmc.hpp"
+#include "optimizer/scheduler.hpp"
 #include "strategies/strategy_factory.hpp"
 #include "training/kernels/camera_loss_heatmap.cuh"
 #include "training/kernels/grad_alpha.hpp"
@@ -3257,6 +3258,14 @@ namespace lfs::training {
                                                         ppisp_.get(),
                                                         ppisp_controller_pool_.get());
                     LOG_INFO("{}", metrics.to_string());
+
+                    // Notify ReduceLROnPlateau scheduler if enabled
+                    if (auto* plateau_scheduler = strategy_->get_plateau_scheduler()) {
+                        if (plateau_scheduler->step(metrics)) {
+                            LOG_INFO("Learning rate reduced to {:.2e} due to plateau",
+                                     strategy_->get_optimizer().get_lr());
+                        }
+                    }
                 }
                 const bool save_regular_phase_output = get_active_sparsify_steps() > 0 &&
                                                        iter == get_sparsity_boundary_iteration();
