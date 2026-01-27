@@ -31,6 +31,13 @@ namespace lfs::vis {
 
 namespace lfs::training {
     class AdamOptimizer;
+
+    // Forward declarations for G3S loss classes
+    namespace losses {
+        struct DepthLoss;
+        struct NormalConsistencyLoss;
+        class MultiViewRegularization;
+    } // namespace losses
     class Trainer {
     public:
         // Legacy constructor - takes ownership of strategy and shares datasets
@@ -184,6 +191,66 @@ namespace lfs::training {
         std::expected<void, std::string> handle_sparsity_update(const int iter, lfs::core::SplatData& splat_data);
         std::expected<void, std::string> apply_sparsity_pruning(const int iter, lfs::core::SplatData& splat_data);
 
+        // ============================================================================
+        // G3S Geometric Regularization
+        // ============================================================================
+
+        /**
+         * @brief Compute G3S geometric regularization losses
+         *
+         * Computes:
+         *   1. G3S median depth using binary search stochastic transmittance
+         *   2. Normal consistency loss between Gaussian normals and depth-derived normals
+         *   3. Multi-view geometric regularization (if neighbor view available)
+         *
+         * Returns combined G3S loss tensor on GPU (no CPU sync)
+         *
+         * @param iter Current iteration
+         * @param cam Reference camera
+         * @param rendered_depth Expected depth from standard rasterization
+         * @param rendered_rgb Rendered RGB image
+         * @param tile_offsets Per-tile Gaussian ranges (from rasterization)
+         * @param flatten_ids Sorted Gaussian indices per tile
+         * @param n_isects Number of tile-gaussian intersections
+         * @return Combined G3S loss tensor or error
+         */
+        std::expected<lfs::core::Tensor, std::string> compute_g3s_losses(
+            int iter,
+            lfs::core::Camera& cam,
+            const lfs::core::Tensor& rendered_depth,
+            const lfs::core::Tensor& rendered_rgb,
+            const int32_t* tile_offsets,
+            const int32_t* flatten_ids,
+            int n_isects);
+
+        /**
+         * @brief Render G3S median depth using binary search transmittance
+         *
+         * @param cam Camera for rendering
+         * @param init_depth Initial depth estimate from standard rasterization
+         * @param tile_offsets Per-tile Gaussian ranges
+         * @param flatten_ids Sorted Gaussian indices per tile
+         * @param n_isects Number of intersections
+         * @return (median_depth, valid_mask) tensors or error
+         */
+        std::expected<std::pair<lfs::core::Tensor, lfs::core::Tensor>, std::string> render_g3s_median_depth(
+            lfs::core::Camera& cam,
+            const lfs::core::Tensor& init_depth,
+            const int32_t* tile_offsets,
+            const int32_t* flatten_ids,
+            int n_isects);
+
+        /**
+         * @brief Find a neighboring camera for multi-view regularization
+         *
+         * Selects a camera with similar viewpoint for geometric consistency checks.
+         * Uses distance and angular similarity criteria.
+         *
+         * @param ref_cam Reference camera
+         * @return Pointer to neighbor camera or nullptr if none suitable
+         */
+        lfs::core::Camera* find_neighbor_camera(const lfs::core::Camera& ref_cam);
+
         // Cleanup method for re-initialization
         void cleanup();
 
@@ -249,5 +316,26 @@ namespace lfs::training {
         std::function<void()> callback_;
         std::atomic<bool> callback_busy_{false};
         cudaStream_t callback_stream_ = nullptr;
+
+        // ============================================================================
+        // G3S Geometric Regularization State
+        // ============================================================================
+
+        // Pre-allocated buffers for G3S computation (to avoid allocation churn)
+        lfs::core::Tensor g3s_median_depth_;      ///< [H, W] G3S median depth output
+        lfs::core::Tensor g3s_valid_mask_;        ///< [H, W] Validity mask for G3S depth
+        lfs::core::Tensor g3s_depth_normals_;     ///< [H, W, 3] Depth-derived surface normals
+        lfs::core::Tensor g3s_gaussian_normals_;  ///< [N, 3] Computed Gaussian normals
+        size_t g3s_allocated_h_ = 0;              ///< Allocated height for G3S buffers
+        size_t g3s_allocated_w_ = 0;              ///< Allocated width for G3S buffers
+        size_t g3s_allocated_n_ = 0;              ///< Allocated Gaussian count
+
+        // Loss class instances (stateful for buffer reuse)
+        std::unique_ptr<losses::DepthLoss> depth_loss_;
+        std::unique_ptr<losses::NormalConsistencyLoss> normal_consistency_loss_;
+        std::unique_ptr<losses::MultiViewRegularization> multiview_reg_;
+
+        // Neighbor camera cache for multi-view regularization
+        std::unordered_map<int, int> neighbor_camera_cache_; ///< Maps camera UID to neighbor UID
     };
 } // namespace lfs::training

@@ -37,6 +37,64 @@ namespace lfs::core {
             }
         } // namespace
 
+        // ============================================================================
+        // G3SParameters serialization
+        // ============================================================================
+
+        nlohmann::json G3SParameters::to_json() const {
+            nlohmann::json j;
+            j["enabled"] = enabled;
+            j["depth_loss_weight"] = depth_loss_weight;
+            j["multiview_weight"] = multiview_weight;
+            j["normal_consistency_weight"] = normal_consistency_weight;
+            j["search_radius"] = search_radius;
+            j["binary_search_iterations"] = binary_search_iterations;
+            j["start_iteration"] = start_iteration;
+            j["neighbor_sample_count"] = neighbor_sample_count;
+            j["use_edge_aware_smoothness"] = use_edge_aware_smoothness;
+            j["min_valid_depth"] = min_valid_depth;
+            return j;
+        }
+
+        G3SParameters G3SParameters::from_json(const nlohmann::json& j) {
+            G3SParameters params;
+            if (j.contains("enabled")) {
+                params.enabled = j["enabled"];
+            }
+            if (j.contains("depth_loss_weight")) {
+                params.depth_loss_weight = j["depth_loss_weight"];
+            }
+            if (j.contains("multiview_weight")) {
+                params.multiview_weight = j["multiview_weight"];
+            }
+            if (j.contains("normal_consistency_weight")) {
+                params.normal_consistency_weight = j["normal_consistency_weight"];
+            }
+            if (j.contains("search_radius")) {
+                params.search_radius = j["search_radius"];
+            }
+            if (j.contains("binary_search_iterations")) {
+                params.binary_search_iterations = j["binary_search_iterations"];
+            }
+            if (j.contains("start_iteration")) {
+                params.start_iteration = j["start_iteration"];
+            }
+            if (j.contains("neighbor_sample_count")) {
+                params.neighbor_sample_count = j["neighbor_sample_count"];
+            }
+            if (j.contains("use_edge_aware_smoothness")) {
+                params.use_edge_aware_smoothness = j["use_edge_aware_smoothness"];
+            }
+            if (j.contains("min_valid_depth")) {
+                params.min_valid_depth = j["min_valid_depth"];
+            }
+            return params;
+        }
+
+        // ============================================================================
+        // OptimizationParameters serialization
+        // ============================================================================
+
         nlohmann::json OptimizationParameters::to_json() const {
 
             nlohmann::json opt_json;
@@ -105,6 +163,9 @@ namespace lfs::core {
             opt_json["mask_opacity_penalty_weight"] = mask_opacity_penalty_weight;
             opt_json["mask_opacity_penalty_power"] = mask_opacity_penalty_power;
             opt_json["mask_threshold"] = mask_threshold;
+
+            // G3S geometric regularization
+            opt_json["g3s"] = g3s.to_json();
 
             return opt_json;
         }
@@ -313,6 +374,11 @@ namespace lfs::core {
             }
             if (json.contains("mask_threshold")) {
                 params.mask_threshold = json["mask_threshold"];
+            }
+
+            // G3S geometric regularization
+            if (json.contains("g3s")) {
+                params.g3s = G3SParameters::from_json(json["g3s"]);
             }
 
             return params;

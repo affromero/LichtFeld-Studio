@@ -19,11 +19,13 @@ namespace lfs::training {
 
     // Render modes for gsplat rasterizer
     enum class GsplatRenderMode {
-        RGB = 0,   // RGB only
-        D = 1,     // Depth only
-        ED = 2,    // Expected depth
-        RGB_D = 3, // RGB + depth
-        RGB_ED = 4 // RGB + expected depth
+        RGB = 0,       // RGB only
+        D = 1,         // Depth only
+        ED = 2,        // Expected depth
+        RGB_D = 3,     // RGB + depth
+        RGB_ED = 4,    // RGB + expected depth
+        G3S_DEPTH = 5, // G3S stochastic median depth
+        RGB_G3S = 6    // RGB + G3S median depth
     };
 
     // Forward pass context - holds raw pointers needed for backward (arena allocated)

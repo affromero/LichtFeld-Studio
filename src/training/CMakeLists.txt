@@ -20,6 +20,13 @@ set(LFS_TRAINING_KERNEL_SOURCES
     kernels/mcmc_kernels.cu
     kernels/densification_kernels.cu
     kernels/grad_alpha.cu
+    kernels/g3s_vacancy.cu
+    kernels/g3s_transmittance.cu
+    kernels/g3s_median_depth.cu
+    kernels/g3s_median_depth_backward.cu
+    kernels/depth_loss.cu
+    kernels/multiview_regularization.cu
+    kernels/normal_consistency.cu
     components/sparsity_optimizer_kernels.cu
 )
 
@@ -75,6 +82,9 @@ set(TRAINING_NEW_SOURCES
     optimizer/scheduler.cpp
     losses/regularization.cpp
     losses/photometric_loss.cpp
+    losses/depth_loss.cpp
+    losses/multiview_regularization.cpp
+    losses/normal_consistency.cpp
     strategies/strategy_utils.cpp
     strategies/adc.cpp
     strategies/mcmc.cpp

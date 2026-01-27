@@ -30,6 +30,24 @@ namespace lfs::core {
             Random      // Random per-pixel colors each iteration
         };
 
+        // G³S (Gaussian Geometry Guidance) parameters for geometric regularization
+        // From: "G³S: Geometry-Guided Gaussian Splatting for Reconstruction"
+        struct G3SParameters {
+            bool enabled = false;                      ///< Enable G³S geometric regularization
+            float depth_loss_weight = 1.0f;            ///< Weight for depth supervision loss
+            float multiview_weight = 0.6f;             ///< Weight for multi-view consistency loss
+            float normal_consistency_weight = 0.05f;   ///< Weight for normal consistency loss
+            float search_radius = 0.4f;                ///< Binary search radius for median depth
+            int binary_search_iterations = 5;          ///< Number of binary search iterations
+            int start_iteration = 7000;                ///< Iteration to start G³S regularization (warmup)
+            int neighbor_sample_count = 1;             ///< Number of neighbor views for multi-view loss
+            bool use_edge_aware_smoothness = true;     ///< Use RGB-guided edge-aware depth smoothness
+            float min_valid_depth = 0.01f;             ///< Minimum valid depth for loss computation
+
+            nlohmann::json to_json() const;
+            static G3SParameters from_json(const nlohmann::json& j);
+        };
+
         struct OptimizationParameters {
             size_t iterations = 30'000;
             size_t sh_degree_interval = 1'000;
@@ -60,6 +78,9 @@ namespace lfs::core {
             bool no_splash = false;                           // Skip splash screen on startup
             bool no_interop = false;                          // Disable CUDA-GL interop (use CPU fallback)
             std::string strategy = "mcmc";                    // Optimization strategy: mcmc, adc.
+
+            // G³S geometric regularization parameters
+            G3SParameters g3s;
 
             // Mask parameters
             MaskMode mask_mode = MaskMode::None;      // Attention mask mode

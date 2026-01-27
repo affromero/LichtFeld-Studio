@@ -17,5 +17,8 @@
  * instead of torch::Tensor at the API level.
  */
 
+#include "depth_loss.hpp"
+#include "multiview_regularization.hpp"
+#include "normal_consistency.hpp"
 #include "photometric_loss.hpp"
 #include "regularization.hpp"
