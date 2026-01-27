@@ -80,6 +80,7 @@ set(BENCHMARK_FILES
     benchmark_strided_tensors.cpp
     benchmark_scheduler.cpp
     benchmark_losses.cpp
+    benchmark_ppisp_controller.cpp
     # profile_adam_optimizer.cpp  # Disabled - missing header
     test_tensor_benchmark.cpp
     test_memory_pool_benchmark.cpp
@@ -207,6 +208,11 @@ set(TEST_FILES
     test_fastgs_kernels.cpp
     test_fastgs_fuzz.cpp
     test_background_image.cpp
+    test_tensor_nn_ops.cpp
+    test_ppisp_controller.cpp
+    test_ppisp_regularization.cpp
+    test_ppisp_cuda_vs_torch.cpp
+    test_controller_memory.cpp
 )
 
 # Build test sources list

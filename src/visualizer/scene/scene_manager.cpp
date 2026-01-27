@@ -19,6 +19,9 @@
 #include "io/loader.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "training/checkpoint.hpp"
+#include "training/components/ppisp.hpp"
+#include "training/components/ppisp_controller.hpp"
+#include "training/components/ppisp_file.hpp"
 #include "training/trainer.hpp"
 #include "training/training_manager.hpp"
 #include "training/training_setup.hpp"
@@ -297,11 +300,74 @@ namespace lfs::vis {
             updateCropBoxToFitScene(true);
             selectNode(name);
 
+            // Check for companion PPISP file
+            auto ppisp_path = lfs::training::find_ppisp_companion(path);
+            if (!ppisp_path.empty()) {
+                LOG_INFO("Found PPISP companion file: {}", lfs::core::path_to_utf8(ppisp_path));
+                loadPPISPCompanion(ppisp_path);
+            }
+
             LOG_INFO("Loaded '{}' with {} gaussians", name, gaussian_count);
 
         } catch (const std::exception& e) {
             LOG_ERROR("Failed to load splat file: {} (path: {})", e.what(), lfs::core::path_to_utf8(path));
             throw;
+        }
+    }
+
+    void SceneManager::loadPPISPCompanion(const std::filesystem::path& ppisp_path) {
+        try {
+            // Read header to get dimensions
+            std::ifstream file;
+            if (!lfs::core::open_file_for_read(ppisp_path, std::ios::binary, file)) {
+                LOG_ERROR("Failed to open PPISP file: {}", lfs::core::path_to_utf8(ppisp_path));
+                return;
+            }
+
+            lfs::training::PPISPFileHeader header{};
+            file.read(reinterpret_cast<char*>(&header), sizeof(header));
+            file.close();
+
+            if (header.magic != lfs::training::PPISP_FILE_MAGIC) {
+                LOG_ERROR("Invalid PPISP file: wrong magic");
+                return;
+            }
+
+            // Create PPISP with dimensions from file
+            // total_iterations=1 since we won't be training (just inference)
+            auto ppisp = std::make_unique<lfs::training::PPISP>(
+                static_cast<int>(header.num_cameras),
+                static_cast<int>(header.num_frames),
+                1);
+
+            // Create controller pool if present in file
+            std::unique_ptr<lfs::training::PPISPControllerPool> controller_pool;
+            if (lfs::training::has_flag(header.flags, lfs::training::PPISPFileFlags::HAS_CONTROLLER)) {
+                controller_pool = std::make_unique<lfs::training::PPISPControllerPool>(
+                    static_cast<int>(header.num_cameras), 1);
+            }
+
+            // Load the actual data
+            auto result = lfs::training::load_ppisp_file(ppisp_path, *ppisp, controller_pool.get());
+            if (!result) {
+                LOG_ERROR("Failed to load PPISP file: {}", result.error());
+                return;
+            }
+
+            // Allocate CNN buffers for controller if present
+            if (controller_pool) {
+                // Use a reasonable default size for viewport rendering
+                // Buffers will be reallocated if larger images are needed
+                constexpr size_t DEFAULT_MAX_H = 1080;
+                constexpr size_t DEFAULT_MAX_W = 1920;
+                controller_pool->allocate_buffers(DEFAULT_MAX_H, DEFAULT_MAX_W);
+            }
+
+            // Store in scene for rendering
+            scene_.setAppearanceModel(std::move(ppisp), std::move(controller_pool));
+
+        } catch (const std::exception& e) {
+            LOG_ERROR("Failed to load PPISP companion: {}", e.what());
         }
     }
 
@@ -360,6 +426,13 @@ namespace lfs::vis {
 
             emitSceneChanged();
             selectNode(name);
+
+            // Check for companion PPISP file
+            auto ppisp_path = lfs::training::find_ppisp_companion(path);
+            if (!ppisp_path.empty()) {
+                LOG_INFO("Found PPISP companion file: {}", lfs::core::path_to_utf8(ppisp_path));
+                loadPPISPCompanion(ppisp_path);
+            }
 
             LOG_INFO("Added '{}' ({} gaussians)", name, gaussian_count);
             return name;
@@ -1532,14 +1605,26 @@ namespace lfs::vis {
         auto splat_data = std::move(model_node->model);
         const size_t num_gaussians = splat_data->size();
 
-        if (services().trainerOrNull()) {
-            services().trainerOrNull()->clearTrainer();
+        // Extract PPISP models from trainer before clearing
+        std::unique_ptr<lfs::training::PPISP> ppisp;
+        std::unique_ptr<lfs::training::PPISPControllerPool> controller_pool;
+        if (auto* trainer_mgr = services().trainerOrNull()) {
+            if (auto* trainer = trainer_mgr->getTrainer(); trainer && trainer->hasPPISP()) {
+                ppisp = trainer->takePPISP();
+                controller_pool = trainer->takePPISPControllerPool();
+            }
+            trainer_mgr->clearTrainer();
         }
         scene_.clear();
 
         constexpr const char* MODEL_NAME = "Trained Model";
         scene_.addNode(MODEL_NAME, std::move(splat_data));
         selectNode(MODEL_NAME);
+
+        // Restore PPISP appearance model to scene
+        if (ppisp) {
+            scene_.setAppearanceModel(std::move(ppisp), std::move(controller_pool));
+        }
 
         {
             std::lock_guard lock(state_mutex_);

@@ -16,6 +16,8 @@
 #include "rendering/rendering.hpp"
 #include "rendering/rendering_pipeline.hpp"
 #include "scene/scene_manager.hpp"
+#include "training/components/ppisp.hpp"
+#include "training/components/ppisp_controller.hpp"
 #include "training/trainer.hpp"
 #include "training/training_manager.hpp"
 #include <cuda_runtime.h>
@@ -28,6 +30,85 @@ namespace lfs::vis {
 
     namespace {
         constexpr int GPU_ALIGNMENT = 16; // 16-pixel alignment for GPU texture efficiency
+
+        lfs::training::PPISPRenderOverrides toRenderOverrides(const PPISPOverrides& ov) {
+            lfs::training::PPISPRenderOverrides r;
+            r.exposure_offset = ov.exposure_offset;
+            r.vignette_enabled = ov.vignette_enabled;
+            r.vignette_strength = ov.vignette_strength;
+            r.wb_temperature = ov.wb_temperature;
+            r.wb_tint = ov.wb_tint;
+            r.color_red_x = ov.color_red_x;
+            r.color_red_y = ov.color_red_y;
+            r.color_green_x = ov.color_green_x;
+            r.color_green_y = ov.color_green_y;
+            r.color_blue_x = ov.color_blue_x;
+            r.color_blue_y = ov.color_blue_y;
+            r.gamma_multiplier = ov.gamma_multiplier;
+            r.gamma_red = ov.gamma_red;
+            r.gamma_green = ov.gamma_green;
+            r.gamma_blue = ov.gamma_blue;
+            r.crf_toe = ov.crf_toe;
+            r.crf_shoulder = ov.crf_shoulder;
+            return r;
+        }
+
+        // Apply standalone appearance model (for viewing without training context)
+        lfs::core::Tensor applyStandaloneAppearance(
+            const lfs::core::Tensor& rgb,
+            Scene& scene,
+            int camera_uid,
+            const PPISPOverrides& overrides) {
+
+            auto* ppisp = scene.getAppearancePPISP();
+            if (!ppisp) {
+                return rgb;
+            }
+
+            // Ensure input is [C,H,W] format
+            auto input = rgb;
+            bool was_hwc = false;
+            if (input.ndim() == 3 && input.shape()[2] == 3) {
+                input = input.permute({2, 0, 1}).contiguous();
+                was_hwc = true;
+            }
+
+            lfs::core::Tensor result;
+
+            // Check if this is a known training camera
+            bool is_training_camera = (camera_uid >= 0 && camera_uid < ppisp->num_frames());
+
+            if (is_training_camera) {
+                // Use per-frame learned parameters with overrides
+                if (overrides.isIdentity()) {
+                    result = ppisp->apply(input, camera_uid, camera_uid);
+                } else {
+                    result = ppisp->apply_with_overrides(input, camera_uid, camera_uid, toRenderOverrides(overrides));
+                }
+            } else if (scene.hasAppearanceController()) {
+                // Novel view: use per-camera controller prediction with optional overrides
+                auto* pool = scene.getAppearanceControllerPool();
+                const int controller_idx = camera_uid >= 0 ? camera_uid % pool->num_cameras() : 0;
+                auto input_batch = input.unsqueeze(0);
+                auto params = pool->predict(controller_idx, input_batch, 1.0f);
+                if (overrides.isIdentity()) {
+                    result = ppisp->apply_with_controller_params(input, params, 0);
+                } else {
+                    result = ppisp->apply_with_controller_params_and_overrides(input, params, 0,
+                                                                               toRenderOverrides(overrides));
+                }
+            } else {
+                // No controller - return uncorrected (same as trainer)
+                return rgb;
+            }
+
+            // Convert back to [H,W,C] if input was that format
+            if (was_hwc && result.is_valid()) {
+                result = result.permute({1, 2, 0}).contiguous();
+            }
+
+            return result;
+        }
     } // namespace
 
     using namespace lfs::core::events;
@@ -791,7 +872,41 @@ namespace lfs::vis {
             }
         }
 
-        const auto render_result = engine_->renderGaussians(*model, request);
+        auto render_result = engine_->renderGaussians(*model, request);
+
+        // Apply PPISP correction if enabled in settings (off by default for fast viewport)
+        if (render_result && render_result->image && settings_.apply_appearance_correction) {
+            bool applied = false;
+
+            // Try trainer's PPISP first (has per-frame params and knows training cameras)
+            if (const auto* tm = scene_manager ? scene_manager->getTrainerManager() : nullptr) {
+                if (const auto* trainer = tm->getTrainer(); trainer && trainer->hasPPISP()) {
+                    lfs::training::PPISPViewportOverrides trainer_overrides{
+                        .exposure_offset = settings_.ppisp_overrides.exposure_offset,
+                        .vignette_enabled = settings_.ppisp_overrides.vignette_enabled,
+                        .vignette_strength = settings_.ppisp_overrides.vignette_strength,
+                        .wb_temperature = settings_.ppisp_overrides.wb_temperature,
+                        .wb_tint = settings_.ppisp_overrides.wb_tint,
+                        .gamma_multiplier = settings_.ppisp_overrides.gamma_multiplier};
+                    auto corrected = trainer->applyPPISPForViewport(
+                        *render_result->image, current_camera_id_, trainer_overrides);
+                    render_result->image = std::make_shared<lfs::core::Tensor>(std::move(corrected));
+                    applied = true;
+                }
+            }
+
+            // Fall back to scene's standalone appearance model
+            if (!applied && scene_manager) {
+                auto& scene = scene_manager->getScene();
+                if (scene.hasAppearanceModel()) {
+                    auto corrected = applyStandaloneAppearance(
+                        *render_result->image, scene, current_camera_id_, settings_.ppisp_overrides);
+                    if (corrected.is_valid()) {
+                        render_result->image = std::make_shared<lfs::core::Tensor>(std::move(corrected));
+                    }
+                }
+            }
+        }
 
         render_lock.reset();
 

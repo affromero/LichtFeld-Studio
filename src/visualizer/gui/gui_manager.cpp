@@ -28,6 +28,7 @@
 #include "gui/windows/file_browser.hpp"
 #include "io/exporter.hpp"
 #include "io/loader.hpp"
+#include <implot.h>
 
 #include "input/input_controller.hpp"
 #include "internal/resource_paths.hpp"
@@ -304,6 +305,7 @@ namespace lfs::vis::gui {
         // ImGui initialization
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
+        ImPlot::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
@@ -539,6 +541,7 @@ namespace lfs::vis::gui {
         if (ImGui::GetCurrentContext()) {
             ImGui_ImplOpenGL3_Shutdown();
             ImGui_ImplGlfw_Shutdown();
+            ImPlot::DestroyContext();
             ImGui::DestroyContext();
         }
     }

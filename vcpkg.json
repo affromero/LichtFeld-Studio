@@ -16,6 +16,7 @@
         "opengl3-binding"
       ]
     },
+    "implot",
     "libarchive",
     "libwebp",
     "nlohmann-json",

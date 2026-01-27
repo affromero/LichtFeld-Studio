@@ -407,6 +407,99 @@ namespace lfs::vis::gui::panels {
             widgets::SetThemedTooltip("%s", LOC(Tooltip::MIP_FILTER));
         }
 
+        if (ImGui::Checkbox(LOC(MainPanel::APPEARANCE_CORRECTION), &settings.apply_appearance_correction)) {
+            settings_changed = true;
+            render_manager->updateSettings(settings);
+        }
+        if (ImGui::IsItemHovered()) {
+            widgets::SetThemedTooltip("%s", LOC(Tooltip::APPEARANCE_CORRECTION));
+        }
+
+        // PPISP adjustment controls (only show when appearance correction enabled)
+        if (settings.apply_appearance_correction) {
+            ImGui::Indent();
+            auto& ov = settings.ppisp_overrides;
+
+            // Exposure
+            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_EXPOSURE), &ov.exposure_offset, -3.0f, 3.0f, 0.0f,
+                                         LOC(Tooltip::PPISP_EXPOSURE))) {
+                settings_changed = true;
+                render_manager->updateSettings(settings);
+            }
+
+            // Vignette toggle + strength
+            if (ImGui::Checkbox(LOC(MainPanel::PPISP_VIGNETTE), &ov.vignette_enabled)) {
+                settings_changed = true;
+                render_manager->updateSettings(settings);
+            }
+            if (ov.vignette_enabled) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80.0f * getDpiScale());
+                float vig_pct = ov.vignette_strength * 100.0f;
+                if (ImGui::SliderFloat("##vig_str", &vig_pct, 0.0f, 500.0f, "%.0f%%")) {
+                    ov.vignette_strength = vig_pct / 100.0f;
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+            }
+
+            // Unified chromaticity diagram with R, G, B, Neutral control points
+            if (widgets::ChromaticityDiagram(LOC(MainPanel::PPISP_COLOR_BALANCE), &ov.color_red_x, &ov.color_red_y,
+                                             &ov.color_green_x, &ov.color_green_y, &ov.color_blue_x, &ov.color_blue_y,
+                                             &ov.wb_temperature, &ov.wb_tint, 1.0f)) {
+                settings_changed = true;
+                render_manager->updateSettings(settings);
+            }
+
+            // Gamma
+            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_GAMMA), &ov.gamma_multiplier, 0.5f, 2.5f, 1.0f,
+                                         LOC(Tooltip::PPISP_GAMMA))) {
+                settings_changed = true;
+                render_manager->updateSettings(settings);
+            }
+
+            // Advanced CRF (collapsible)
+            if (ImGui::TreeNode(LOC(MainPanel::PPISP_CRF_ADVANCED))) {
+                // Curve preview
+                widgets::CRFCurvePreview("##crf_curve", ov.gamma_multiplier, ov.crf_toe, ov.crf_shoulder,
+                                         ov.gamma_red, ov.gamma_green, ov.gamma_blue);
+
+                // Per-channel gamma
+                if (widgets::SliderWithReset(LOC(MainPanel::PPISP_GAMMA_RED), &ov.gamma_red, -0.5f, 0.5f, 0.0f,
+                                             LOC(Tooltip::PPISP_GAMMA_CHANNEL))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+                if (widgets::SliderWithReset(LOC(MainPanel::PPISP_GAMMA_GREEN), &ov.gamma_green, -0.5f, 0.5f, 0.0f,
+                                             LOC(Tooltip::PPISP_GAMMA_CHANNEL))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+                if (widgets::SliderWithReset(LOC(MainPanel::PPISP_GAMMA_BLUE), &ov.gamma_blue, -0.5f, 0.5f, 0.0f,
+                                             LOC(Tooltip::PPISP_GAMMA_CHANNEL))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+
+                // Toe (shadows)
+                if (widgets::SliderWithReset(LOC(MainPanel::PPISP_CRF_TOE), &ov.crf_toe, -1.0f, 1.0f, 0.0f,
+                                             LOC(Tooltip::PPISP_CRF_TOE))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+
+                // Shoulder (highlights)
+                if (widgets::SliderWithReset(LOC(MainPanel::PPISP_CRF_SHOULDER), &ov.crf_shoulder, -1.0f, 1.0f, 0.0f,
+                                             LOC(Tooltip::PPISP_CRF_SHOULDER))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+                ImGui::TreePop();
+            }
+
+            ImGui::Unindent();
+        }
+
         // Render Scale (VRAM optimization)
         ImGui::Separator();
         if (widgets::SliderWithReset(LOC(MainPanel::RENDER_SCALE), &settings.render_scale, 0.25f, 1.0f, 1.0f,
