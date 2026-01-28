@@ -235,7 +235,7 @@ namespace lfs::core {
             EVENT(TrainingReadyToStart, );
             EVENT(WindowFocusLost, );
         } // namespace internal
-    }     // namespace events
+    } // namespace events
 
     // ============================================================================
     // Convenience functions
