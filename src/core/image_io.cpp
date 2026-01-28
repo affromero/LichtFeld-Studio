@@ -390,7 +390,7 @@ namespace lfs::core {
             throw std::runtime_error("save_image: channels must be in [1..4]");
 
         const std::string path_utf8 = lfs::core::path_to_utf8(path);
-        LOG_INFO("Saving image: {} shape: [{}, {}, {}]", path_utf8, height, width, channels);
+        LOG_DEBUG("Saving image: {} shape: [{}, {}, {}]", path_utf8, height, width, channels);
 
         auto img_uint8 = (image.clamp(0, 1) * 255.0f).to(lfs::core::DataType::UInt8).contiguous();
 
