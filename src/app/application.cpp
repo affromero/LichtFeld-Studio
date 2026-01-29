@@ -9,6 +9,7 @@
 #include "core/path_utils.hpp"
 #include "core/tensor/internal/memory_pool.hpp"
 #include "rendering/framebuffer_factory.hpp"
+#include "tetra/tetra_trainer.hpp"
 #include "training/trainer.hpp"
 #include "training/training_setup.hpp"
 #include "visualizer/scene/scene.hpp"
@@ -26,6 +27,7 @@ namespace lfs::app {
     namespace {
 
         bool checkCudaDriverVersion();
+        int runHeadlessTetra(std::unique_ptr<lfs::core::param::TrainingParameters> params);
 
         int runHeadless(std::unique_ptr<lfs::core::param::TrainingParameters> params) {
             if (params->dataset.data_path.empty()) {
@@ -34,6 +36,13 @@ namespace lfs::app {
             }
 
             checkCudaDriverVersion();
+
+            // Check representation type
+            if (params->representation == lfs::core::param::RepresentationType::Tetra) {
+                LOG_INFO("Starting headless tetrahedral training...");
+                return runHeadlessTetra(std::move(params));
+            }
+
             LOG_INFO("Starting headless training...");
 
             vis::Scene scene;
@@ -62,6 +71,39 @@ namespace lfs::app {
             }
 
             LOG_INFO("Headless training completed");
+            return 0;
+        }
+
+        int runHeadlessTetra(std::unique_ptr<lfs::core::param::TrainingParameters> params) {
+            // Create tetra training config from params
+            tetra::TetraTrainConfig config;
+            config.iterations = static_cast<int>(params->optimization.iterations);
+            config.output_path = params->dataset.output_path;
+            // Use CLI resize_factor only if explicitly set (> 1), otherwise keep tetra default of 2
+            // This matches radiance_meshes which uses images_2 (half resolution) by default
+            if (params->dataset.resize_factor > 1) {
+                config.resize_factor = params->dataset.resize_factor;
+            }
+            config.images_folder = params->dataset.images;
+
+            // Create trainer
+            auto trainer = std::make_unique<tetra::TetraTrainer>(config);
+
+            // Initialize from dataset
+            if (const auto result = trainer->initialize(params->dataset.data_path); !result) {
+                LOG_ERROR("Failed to initialize tetra trainer: {}", result.error());
+                return 1;
+            }
+
+            lfs::core::CudaMemoryPool::instance().trim_cached_memory();
+
+            // Run training
+            if (const auto result = trainer->train(); !result) {
+                LOG_ERROR("Tetra training error: {}", result.error());
+                return 1;
+            }
+
+            LOG_INFO("Headless tetrahedral training completed");
             return 0;
         }
 

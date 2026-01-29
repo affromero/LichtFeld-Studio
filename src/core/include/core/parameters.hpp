@@ -14,6 +14,12 @@
 
 namespace lfs::core {
     namespace param {
+        // Scene representation type for training
+        enum class RepresentationType {
+            Gaussian, // Default: 3D Gaussian Splatting
+            Tetra     // Tetrahedral mesh (Radiance Meshes)
+        };
+
         // Mask mode for attention mask behavior during training
         enum class MaskMode {
             None,           // No masking applied
@@ -183,6 +189,9 @@ namespace lfs::core {
         struct TrainingParameters {
             DatasetConfig dataset;
             OptimizationParameters optimization;
+
+            // Scene representation type
+            RepresentationType representation = RepresentationType::Gaussian;
 
             // Viewer mode: splat files to load (.ply, .sog, .resume)
             std::vector<std::filesystem::path> view_paths;

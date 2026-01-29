@@ -184,7 +184,7 @@ else()
 endif()
 
 enable_language(CUDA)
-find_package(CUDAToolkit 12.8 REQUIRED)
+find_package(CUDAToolkit 12.0 REQUIRED)  # Relaxed from 12.8 for compatibility
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr")
 if(WIN32)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --diag-suppress 221 -Xcompiler=/wd4267")
@@ -312,6 +312,7 @@ add_subdirectory(src/io)        # I/O module (lfs::io namespace)
 add_subdirectory(src/rendering) # Rendering module (lfs::rendering namespace)
 add_subdirectory(src/visualizer) # Visualizer module (lfs::vis namespace)
 add_subdirectory(src/geometry)  # Geometry utilities
+add_subdirectory(src/tetra)     # Tetrahedral mesh module (lfs::tetra namespace)
 
 # =============================================================================
 # MAIN EXECUTABLES
@@ -353,6 +354,7 @@ target_link_libraries(${PROJECT_NAME}
         lfs_geometry       # For EuclideanTransform
         lfs_core           # Core library
         lfs_io             # For CacheLoader
+        lfs_tetra          # Tetrahedral mesh support
         fastlfs_backend    # Rasterizer and optimizer
 
         ${OPENGL_LIBRARIES}
@@ -586,6 +588,7 @@ configure_build_type(lfs_rendering)
 configure_build_type(lfs_visualizer)
 configure_build_type(lfs_io)
 configure_build_type(lfs_geometry)
+configure_build_type(lfs_tetra)
 configure_build_type(${PROJECT_NAME})
 
 # =============================================================================

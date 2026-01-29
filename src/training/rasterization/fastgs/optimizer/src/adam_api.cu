@@ -35,8 +35,11 @@ namespace fast_lfs::optimizer {
             throw std::runtime_error("n_elements must be positive");
         }
 
-        // Call the actual implementation
-        adam_step(
+        // Call kernel directly to avoid cross-compilation-unit issues
+        const int grid_size = div_round_up(n_elements, config::block_size_adam_step);
+        const int block_size = config::block_size_adam_step;
+
+        kernels::adam::adam_step_cu<<<grid_size, block_size>>>(
             param,
             exp_avg,
             exp_avg_sq,
@@ -48,6 +51,13 @@ namespace fast_lfs::optimizer {
             eps,
             bias_correction1_rcp,
             bias_correction2_sqrt_rcp);
+
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            throw std::runtime_error(std::string("adam_step_cu kernel launch failed: ") + cudaGetErrorString(err));
+        }
+
+        CHECK_CUDA(config::debug, "adam_step_raw")
     }
 
     void zero_rows_at_indices(

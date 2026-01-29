@@ -25,3 +25,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/nvImageCodec/CMakeLists.txt")
 else()
     message(WARNING "nvImageCodec not found - GPU image loading unavailable")
 endif()
+
+# gDel3D - GPU Delaunay triangulation for tetra module
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/gDel3D/src/gdel3d/gDel3D/GpuDelaunay.cu")
+    message(STATUS "Adding gDel3D (GPU Delaunay)")
+    set(GDEL3D_SUBMODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gDel3D")
+    include("${CMAKE_SOURCE_DIR}/cmake/external/gDel3D.cmake")
+else()
+    message(WARNING "gDel3D not found - GPU Delaunay unavailable, using CPU fallback")
+    message(WARNING "  Run: git submodule update --init external/gDel3D")
+endif()

@@ -92,7 +92,9 @@ namespace fast_lfs::optimizer::kernels::adam {
         const float eps,
         const float bias_correction1_rcp,
         const float bias_correction2_sqrt_rcp) {
-        auto idx = cg::this_grid().thread_rank();
+        // Use standard index calculation instead of cooperative_groups
+        // to avoid potential issues with kernel compilation
+        const int idx = blockIdx.x * blockDim.x + threadIdx.x;
         if (idx >= n_elements)
             return;
         const float grad = param_grad[idx];

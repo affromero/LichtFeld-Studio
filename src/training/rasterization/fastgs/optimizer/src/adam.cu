@@ -38,7 +38,41 @@ void fast_lfs::optimizer::adam_step(
     // IMPORTANT: Use the SAME kernel as legacy (adam_step_cu), NOT the vectorized version!
     // The vectorized kernel (adam_step_vectorized_cu) has different floating-point rounding
     // behavior which causes divergence from legacy implementation.
-    kernels::adam::adam_step_cu<<<div_round_up(n_elements, config::block_size_adam_step), config::block_size_adam_step>>>(
+
+    // Check for any prior CUDA errors before kernel launch
+    cudaError_t prior_err = cudaDeviceSynchronize();
+    if (prior_err != cudaSuccess) {
+        throw std::runtime_error(std::string("CUDA error before adam_step_cu: ") + cudaGetErrorString(prior_err));
+    }
+
+    const int grid_size = div_round_up(n_elements, config::block_size_adam_step);
+    const int block_size = config::block_size_adam_step;
+
+    // Debug: print launch configuration
+    printf("[adam_step] Launching kernel: grid=%d, block=%d, n_elements=%d\n", grid_size, block_size, n_elements);
+    fflush(stdout);
+
+    // Check if kernel function pointer is valid
+    void* kernel_func = (void*)kernels::adam::adam_step_cu;
+    if (!kernel_func) {
+        throw std::runtime_error("adam_step_cu kernel function pointer is null!");
+    }
+
+    // Get device properties to validate launch config
+    int device;
+    cudaGetDevice(&device);
+    cudaDeviceProp props;
+    cudaGetDeviceProperties(&props, device);
+    printf("[adam_step] Device %d: %s, maxThreadsPerBlock=%d, maxGridSize=[%d,%d,%d]\n",
+           device, props.name, props.maxThreadsPerBlock,
+           props.maxGridSize[0], props.maxGridSize[1], props.maxGridSize[2]);
+    fflush(stdout);
+
+    if (block_size > props.maxThreadsPerBlock) {
+        throw std::runtime_error("block_size exceeds maxThreadsPerBlock");
+    }
+
+    kernels::adam::adam_step_cu<<<grid_size, block_size>>>(
         param,
         exp_avg,
         exp_avg_sq,

@@ -103,6 +103,12 @@ namespace {
             ::args::ValueFlag<int> sh_degree(parser, "sh_degree", "Max SH degree [0-3]", {"sh-degree"});
             ::args::ValueFlag<float> min_opacity(parser, "min_opacity", "Minimum opacity threshold", {"min-opacity"});
             ::args::ValueFlag<std::string> strategy(parser, "strategy", "Optimization strategy: mcmc, adc", {"strategy"});
+            ::args::MapFlag<std::string, lfs::core::param::RepresentationType> representation(parser, "type",
+                                                                               "Representation type: gaussian, tetra (default: gaussian)",
+                                                                               {"representation"},
+                                                                               std::unordered_map<std::string, lfs::core::param::RepresentationType>{
+                                                                                   {"gaussian", lfs::core::param::RepresentationType::Gaussian},
+                                                                                   {"tetra", lfs::core::param::RepresentationType::Tetra}});
             ::args::ValueFlag<int> init_num_pts(parser, "init_num_pts", "Number of random initialization points", {"init-num-pts"});
             ::args::ValueFlag<float> init_extent(parser, "init_extent", "Extent of random initialization", {"init-extent"});
             ::args::ValueFlagList<std::string> timelapse_images(parser, "timelapse_images", "Image filenames to render timelapse images for", {"timelapse-images"});
@@ -400,6 +406,8 @@ namespace {
                                         prune_ratio_val = prune_ratio ? std::optional<float>(::args::get(prune_ratio)) : std::optional<float>(),
                                         // Mask parameters
                                         mask_mode_val = mask_mode ? std::optional<lfs::core::param::MaskMode>(::args::get(mask_mode)) : std::optional<lfs::core::param::MaskMode>(),
+                                        // Representation type
+                                        representation_val = representation ? std::optional<lfs::core::param::RepresentationType>(::args::get(representation)) : std::optional<lfs::core::param::RepresentationType>(),
                                         // Capture flag states
                                         enable_mip_flag = bool(enable_mip),
                                         use_bilateral_grid_flag = bool(use_bilateral_grid),
@@ -474,6 +482,9 @@ namespace {
                 // Also propagate to dataset config for loading
                 ds.invert_masks = opt.invert_masks;
                 ds.mask_threshold = opt.mask_threshold;
+
+                // Representation type
+                setVal(representation_val, params.representation);
             };
 
             return std::make_tuple(ParseResult::Success, apply_cmd_overrides);

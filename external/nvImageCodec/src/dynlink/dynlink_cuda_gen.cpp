@@ -1,5 +1,12 @@
 #include <cuda.h>
 
+// Compatibility for CUDA < 12.8 where CUctxCreateParams is not defined
+#if CUDA_VERSION < 12080
+struct CUctxCreateParams {
+    void* reserved[8];  // Placeholder for forward compatibility
+};
+#endif
+
 void* CudaLoadSymbol(const char* name);
 
 #define LOAD_SYMBOL_FUNC Cuda##LoadSymbol
