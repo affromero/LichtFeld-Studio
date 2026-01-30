@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -85,11 +86,23 @@ namespace lfs::training {
 
         void save_report() const;
 
+        // Get best metrics for checkpoint/video generation
+        std::optional<EvalMetrics> get_best_psnr() const;
+        std::optional<EvalMetrics> get_best_ssim() const;
+
+        // Check if this iteration achieved a new best
+        bool is_new_best_psnr(int iteration) const;
+        bool is_new_best_ssim(int iteration) const;
+
     private:
         const std::filesystem::path output_dir_;
         std::vector<EvalMetrics> all_metrics_;
         const std::filesystem::path csv_path_;
         const std::filesystem::path txt_path_;
+
+        // Track best metrics
+        std::optional<EvalMetrics> best_psnr_;
+        std::optional<EvalMetrics> best_ssim_;
     };
 
     // Main evaluator class that handles all metrics computation and visualization
@@ -119,6 +132,20 @@ namespace lfs::training {
         void print_evaluation_header(const int iteration) const {
             std::cout << std::endl;
             std::cout << "[Evaluation at step " << iteration << "]" << std::endl;
+        }
+
+        // Get best metrics (for generating best videos/checkpoints)
+        std::optional<EvalMetrics> get_best_psnr() const {
+            return _reporter ? _reporter->get_best_psnr() : std::nullopt;
+        }
+
+        std::optional<EvalMetrics> get_best_ssim() const {
+            return _reporter ? _reporter->get_best_ssim() : std::nullopt;
+        }
+
+        // Check if this iteration achieved a new best (useful for saving best checkpoint)
+        bool is_new_best(int iteration) const {
+            return _reporter && _reporter->is_new_best_psnr(iteration);
         }
 
     private:

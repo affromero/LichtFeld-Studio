@@ -18,6 +18,7 @@
 #include "optimizer/scheduler.hpp"
 #include "progress.hpp"
 #include "strategies/istrategy.hpp"
+#include "video_renderer.hpp"
 #include <atomic>
 #include <expected>
 #include <memory>
@@ -290,6 +291,13 @@ namespace lfs::training {
 
         // Metrics evaluator - handles all evaluation logic
         std::unique_ptr<lfs::training::MetricsEvaluator> evaluator_;
+
+        // Video renderer for checkpoint walkthrough videos (optional)
+        std::unique_ptr<lfs::training::VideoRenderer> video_renderer_;
+
+        // Index of camera selected for training progress video (chosen for visual diversity)
+        size_t training_video_camera_idx_{0};
+        bool training_video_camera_selected_{false};
 
         // Single mutex that protects the model during training
         mutable std::shared_mutex render_mutex_;

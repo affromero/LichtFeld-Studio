@@ -122,6 +122,18 @@ namespace lfs::core {
         }
     }
 
+    void Camera::initialize_cuda_tensors() {
+        // Ensure world view transform is on CUDA
+        if (_world_view_transform.is_valid() && _world_view_transform.device() != Device::CUDA) {
+            _world_view_transform = _world_view_transform.to(Device::CUDA).contiguous();
+        }
+
+        // Ensure camera position is on CUDA
+        if (_cam_position.is_valid() && _cam_position.device() != Device::CUDA) {
+            _cam_position = _cam_position.to(Device::CUDA).contiguous();
+        }
+    }
+
     Camera::Camera(Camera&& other) noexcept
         : _FoVx(other._FoVx),
           _FoVy(other._FoVy),
