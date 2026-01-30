@@ -89,6 +89,7 @@ namespace lfs::training {
         ppisp_controller_pool_.reset();
         sparsity_optimizer_.reset();
         evaluator_.reset();
+        video_renderer_.reset();
 
         // Clear datasets (will be recreated)
         train_dataset_.reset();
@@ -621,6 +622,18 @@ namespace lfs::training {
             // Initialize the evaluator - it handles all metrics internally
             evaluator_ = std::make_unique<lfs::training::MetricsEvaluator>(params_);
             LOG_DEBUG("Metrics evaluator initialized");
+
+            // Initialize video renderer if enabled
+            if (params_.optimization.enable_video_export) {
+                VideoRenderConfig video_config;
+                video_config.fps = params_.optimization.video_fps;
+                video_config.frames_between = params_.optimization.video_frames_between;
+                video_config.loop = params_.optimization.video_loop;
+                video_config.mip_filter = params_.optimization.mip_filter;
+                video_renderer_ = std::make_unique<VideoRenderer>(video_config);
+                LOG_DEBUG("Video renderer initialized (fps={}, frames_between={}, loop={})",
+                          video_config.fps, video_config.frames_between, video_config.loop);
+            }
 
             // Resume from checkpoint if provided
             if (params_.resume_checkpoint.has_value()) {
@@ -1407,6 +1420,25 @@ namespace lfs::training {
                     .emit();
             }
 
+            // Capture training progress frames at regular intervals for training.mp4
+            constexpr int TRAINING_FRAME_INTERVAL = 100;
+            if (video_renderer_ && params_.optimization.enable_video_export &&
+                iter % TRAINING_FRAME_INTERVAL == 0 && train_dataset_ && train_dataset_->size() > 0) {
+
+                // Select diverse camera on first use (lazy initialization)
+                if (!training_video_camera_selected_) {
+                    const auto& cameras = train_dataset_->get_cameras();
+                    training_video_camera_idx_ = VideoRenderer::select_diverse_camera(
+                        cameras, 0.25f, 512);
+                    training_video_camera_selected_ = true;
+                }
+
+                // Use selected camera for training video
+                const auto& cameras = train_dataset_->get_cameras();
+                auto ref_cam = cameras[training_video_camera_idx_];
+                video_renderer_->capture_training_frame(*ref_cam, strategy_->get_model(), background_, iter);
+            }
+
             {
                 DeferredEvents deferred;
                 {
@@ -1445,11 +1477,64 @@ namespace lfs::training {
                                                         background_);
                     LOG_INFO("{}", metrics.to_string());
 
+                    // Save best checkpoint when new best PSNR is achieved
+                    if (evaluator_->is_new_best(iter)) {
+                        LOG_INFO("New best PSNR at iteration {} - saving best checkpoint", iter);
+                        // Save to special "best" checkpoint path
+                        const auto orig_output = params_.dataset.output_path;
+                        auto best_result = save_checkpoint(iter);
+                        if (best_result) {
+                            // Copy/rename to "best" checkpoint
+                            const auto iter_ckpt = orig_output / "checkpoints" / std::format("ckpt_{:06d}", iter);
+                            const auto best_ckpt = orig_output / "checkpoints" / "best";
+                            std::error_code ec;
+                            std::filesystem::remove_all(best_ckpt, ec); // Remove old best if exists
+                            std::filesystem::copy(iter_ckpt, best_ckpt,
+                                std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing, ec);
+                            if (ec) {
+                                LOG_WARN("Failed to copy best checkpoint: {}", ec.message());
+                            }
+                        } else {
+                            LOG_WARN("Failed to save best checkpoint: {}", best_result.error());
+                        }
+                    }
+
                     // Notify ReduceLROnPlateau scheduler if enabled
                     if (auto* plateau_scheduler = strategy_->get_plateau_scheduler()) {
                         if (plateau_scheduler->step(metrics)) {
                             LOG_INFO("Learning rate reduced to {:.2e} due to plateau",
                                      strategy_->get_optimizer().get_lr());
+                        }
+                    }
+
+                    // Render videos at validation step if enabled
+                    if (video_renderer_ && params_.optimization.enable_video_export) {
+                        // Render walkthrough video from validation cameras
+                        if (val_dataset_) {
+                            auto walkthrough_result = video_renderer_->render_validation_video(
+                                iter, val_dataset_, strategy_->get_model(), background_,
+                                params_.dataset.output_path);
+                            if (!walkthrough_result.success) {
+                                LOG_WARN("Walkthrough video rendering failed: {}", walkthrough_result.error_message);
+                            }
+                        }
+
+                        // Render rotation/orbit video around the scene
+                        if (train_dataset_ && train_dataset_->size() > 0) {
+                            auto rotation_result = video_renderer_->render_rotation_video(
+                                iter, train_dataset_->get_cameras(), strategy_->get_model(), background_,
+                                params_.dataset.output_path);
+                            if (!rotation_result.success) {
+                                LOG_WARN("Rotation video rendering failed: {}", rotation_result.error_message);
+                            }
+                        }
+
+                        // Write training progress video
+                        if (video_renderer_->num_training_frames() > 0) {
+                            auto training_result = video_renderer_->write_training_video(params_.dataset.output_path);
+                            if (!training_result.success) {
+                                LOG_WARN("Training video write failed: {}", training_result.error_message);
+                            }
                         }
                     }
                 }
@@ -1701,6 +1786,51 @@ namespace lfs::training {
             evaluator_->save_report();
             if (progress_) {
                 progress_->print_final_summary(static_cast<int>(strategy_->get_model().size()));
+            }
+
+            // Generate "best" videos if enabled and best checkpoint exists
+            if (video_renderer_ && params_.optimization.enable_video_export) {
+                const auto best_ckpt_path = params_.dataset.output_path / "checkpoints" / "best";
+                if (std::filesystem::exists(best_ckpt_path)) {
+                    auto best_metrics = evaluator_->get_best_psnr();
+                    const int best_iter = best_metrics ? best_metrics->iteration : 0;
+                    LOG_INFO("Generating videos for best model (iteration {}, PSNR {:.2f})",
+                             best_iter, best_metrics ? best_metrics->psnr : 0.0f);
+
+                    // Load best checkpoint
+                    auto load_result = load_checkpoint(best_ckpt_path);
+                    if (load_result) {
+                        // Generate best videos
+                        const auto video_dir = params_.dataset.output_path / "videos";
+                        std::filesystem::create_directories(video_dir);
+
+                        if (train_dataset_ && train_dataset_->size() > 0) {
+                            auto rotation_result = video_renderer_->render_rotation_video(
+                                best_iter, train_dataset_->get_cameras(), strategy_->get_model(), background_,
+                                params_.dataset.output_path);
+                            if (rotation_result.success) {
+                                // Rename to best_rotating.mp4
+                                const auto best_path = video_dir / "best_rotating.mp4";
+                                std::filesystem::rename(rotation_result.video_path, best_path);
+                                LOG_INFO("Best rotation video saved: {}", best_path.string());
+                            }
+                        }
+
+                        if (val_dataset_) {
+                            auto walkthrough_result = video_renderer_->render_validation_video(
+                                best_iter, val_dataset_, strategy_->get_model(), background_,
+                                params_.dataset.output_path);
+                            if (walkthrough_result.success) {
+                                // Rename to best_walkthrough.mp4
+                                const auto best_path = video_dir / "best_walkthrough.mp4";
+                                std::filesystem::rename(walkthrough_result.video_path, best_path);
+                                LOG_INFO("Best walkthrough video saved: {}", best_path.string());
+                            }
+                        }
+                    } else {
+                        LOG_WARN("Failed to load best checkpoint for video generation: {}", load_result.error());
+                    }
+                }
             }
 
             is_running_ = false;

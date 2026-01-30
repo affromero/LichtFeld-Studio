@@ -91,6 +91,8 @@ set(TRAINING_NEW_SOURCES
     checkpoint.cpp
     trainer.cpp
     training_setup.cpp
+    camera_interpolation.cpp
+    video_renderer.cpp
 )
 
 # lfs_training - Training module with optimizer

@@ -76,12 +76,36 @@ namespace lfs::training {
     void MetricsReporter::add_metrics(const EvalMetrics& metrics) {
         all_metrics_.push_back(metrics);
 
+        // Track best metrics
+        if (!best_psnr_ || metrics.psnr > best_psnr_->psnr) {
+            best_psnr_ = metrics;
+        }
+        if (!best_ssim_ || metrics.ssim > best_ssim_->ssim) {
+            best_ssim_ = metrics;
+        }
+
         // Append to CSV immediately
         std::ofstream csv_file;
         if (lfs::core::open_file_for_write(csv_path_, std::ios::app, csv_file)) {
             csv_file << metrics.to_csv_row() << std::endl;
             csv_file.close();
         }
+    }
+
+    std::optional<EvalMetrics> MetricsReporter::get_best_psnr() const {
+        return best_psnr_;
+    }
+
+    std::optional<EvalMetrics> MetricsReporter::get_best_ssim() const {
+        return best_ssim_;
+    }
+
+    bool MetricsReporter::is_new_best_psnr(int iteration) const {
+        return best_psnr_ && best_psnr_->iteration == iteration;
+    }
+
+    bool MetricsReporter::is_new_best_ssim(int iteration) const {
+        return best_ssim_ && best_ssim_->iteration == iteration;
     }
 
     void MetricsReporter::save_report() const {

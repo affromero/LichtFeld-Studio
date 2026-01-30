@@ -139,6 +139,12 @@ namespace lfs::core {
             float init_rho = 0.0005f;
             float prune_ratio = 0.6f;
 
+            // Video export parameters (render walkthrough videos at validation steps)
+            bool enable_video_export = false;  ///< Enable video rendering at each eval step
+            int video_fps = 30;                ///< Frames per second for output video
+            int video_frames_between = 30;     ///< Number of interpolated frames between keyframe cameras
+            bool video_loop = false;           ///< Create looping video (return to first camera)
+
             std::string config_file = "";
 
             nlohmann::json to_json() const;
