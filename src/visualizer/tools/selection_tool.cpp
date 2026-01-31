@@ -366,7 +366,6 @@ namespace lfs::vis::tools {
             return true;
         }
 
-
         return false;
     }
 
