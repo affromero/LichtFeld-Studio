@@ -1421,9 +1421,12 @@ namespace lfs::training {
             }
 
             // Capture training progress frames at regular intervals for training.mp4
-            constexpr int TRAINING_FRAME_INTERVAL = 100;
+            // Interval is 10% of the first eval step for good variety
+            const int training_frame_interval = params_.optimization.eval_steps.empty()
+                ? 100
+                : std::max(10, static_cast<int>(params_.optimization.eval_steps[0] / 10));
             if (video_renderer_ && params_.optimization.enable_video_export &&
-                iter % TRAINING_FRAME_INTERVAL == 0 && train_dataset_ && train_dataset_->size() > 0) {
+                iter % training_frame_interval == 0 && train_dataset_ && train_dataset_->size() > 0) {
 
                 // Select diverse camera on first use (lazy initialization)
                 if (!training_video_camera_selected_) {

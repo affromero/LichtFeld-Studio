@@ -76,9 +76,8 @@ namespace lfs::training {
 
             for (int row = 0; row < GLYPH_HEIGHT; ++row) {
                 for (int col = 0; col < GLYPH_WIDTH; ++col) {
-                    // Flip vertically: read glyph rows from bottom to top
-                    const int flipped_row = GLYPH_HEIGHT - 1 - row;
-                    const bool pixel_on = (glyph[flipped_row] >> col) & 1;
+                    // No flip needed: both image and glyph have row 0 at top
+                    const bool pixel_on = (glyph[row] >> col) & 1;
 
                     // Draw scaled pixel
                     for (int sy = 0; sy < scale; ++sy) {
@@ -132,9 +131,8 @@ namespace lfs::training {
 
                     for (int row = 0; row < GLYPH_HEIGHT; ++row) {
                         for (int col = 0; col < GLYPH_WIDTH; ++col) {
-                            // Flip vertically: read glyph rows from bottom to top
-                            const int flipped_row = GLYPH_HEIGHT - 1 - row;
-                            if ((glyph[flipped_row] >> col) & 1) {
+                            // No flip needed: both image and glyph have row 0 at top
+                            if ((glyph[row] >> col) & 1) {
                                 for (int sy = 0; sy < scale; ++sy) {
                                     for (int sx = 0; sx < scale; ++sx) {
                                         const int px = cur_x + col * scale + sx;
@@ -166,9 +164,8 @@ namespace lfs::training {
 
                 for (int row = 0; row < GLYPH_HEIGHT; ++row) {
                     for (int col = 0; col < GLYPH_WIDTH; ++col) {
-                        // Flip vertically: read glyph rows from bottom to top
-                        const int flipped_row = GLYPH_HEIGHT - 1 - row;
-                        if ((glyph[flipped_row] >> col) & 1) {
+                        // No flip needed: both image and glyph have row 0 at top
+                        if ((glyph[row] >> col) & 1) {
                             for (int sy = 0; sy < scale; ++sy) {
                                 for (int sx = 0; sx < scale; ++sx) {
                                     const int px = cur_x + col * scale + sx;
