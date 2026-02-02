@@ -212,6 +212,9 @@ namespace lfs::core {
 
             std::string config_file = "";
 
+            // Random seed for reproducibility (0 = auto/non-deterministic, >0 = fixed seed)
+            uint64_t seed = 0;
+
             void scale_steps(float ratio);
             void apply_step_scaling();
             void remove_step_scaling();

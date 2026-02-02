@@ -209,6 +209,8 @@ namespace lfs::core {
             opt_json["prune_ratio"] = prune_ratio;
             opt_json["bg_modulation"] = bg_modulation;
 
+            // Random seed for reproducibility
+            opt_json["seed"] = seed;
             static constexpr const char* BG_MODE_NAMES[] = {"solid_color", "modulation", "image", "random"};
             opt_json["bg_mode"] = BG_MODE_NAMES[static_cast<int>(bg_mode)];
             opt_json["bg_color"] = {bg_color[0], bg_color[1], bg_color[2]};
@@ -582,6 +584,11 @@ namespace lfs::core {
             // ReduceLROnPlateau scheduler
             if (json.contains("reduce_lr_on_plateau")) {
                 params.reduce_lr_on_plateau = ReduceLROnPlateauParameters::from_json(json["reduce_lr_on_plateau"]);
+            }
+
+            // Random seed for reproducibility
+            if (json.contains("seed")) {
+                params.seed = json["seed"].get<uint64_t>();
             }
 
             return params;

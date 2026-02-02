@@ -115,6 +115,7 @@ namespace {
             ::args::ValueFlag<int> tile_mode(training_group, "tile_mode", "Tile mode for memory-efficient training: 1=1 tile, 2=2 tiles, 4=4 tiles (default: 1)", {"tile-mode"});
             ::args::Flag use_error_map(training_group, "use_error_map", "Weight MRNF refine signal by per-pixel SSIM error map", {"use-error-map"});
             ::args::Flag use_edge_map(training_group, "use_edge_map", "Weight MRNF refine signal by Sobel edge map on GT images", {"use-edge-map"});
+            ::args::ValueFlag<uint64_t> seed(training_group, "seed", "Random seed for reproducibility (0=auto, >0=fixed)", {"seed"});
 
             // =============================================================================
             // INITIALIZATION
@@ -536,6 +537,7 @@ namespace {
                                         timelapse_images_val = cli_option_present({"--timelapse-images"}) ? std::optional<std::vector<std::string>>(::args::get(timelapse_images)) : std::optional<std::vector<std::string>>(),
                                         timelapse_every_val = cli_option_present({"--timelapse-every"}) ? std::optional<int>(::args::get(timelapse_every)) : std::optional<int>(),
                                         tile_mode_val = cli_option_present({"--tile-mode"}) ? std::optional<int>(::args::get(tile_mode)) : std::optional<int>(),
+                                        seed_val = cli_option_present({"--seed"}) ? std::optional<uint64_t>(::args::get(seed)) : std::optional<uint64_t>(),
                                         // Sparsity parameters
                                         sparsify_steps_val = cli_option_present({"--sparsify-steps"}) ? std::optional<int>(::args::get(sparsify_steps)) : std::optional<int>(),
                                         init_rho_val = cli_option_present({"--init-rho"}) ? std::optional<float>(::args::get(init_rho)) : std::optional<float>(),
@@ -609,6 +611,7 @@ namespace {
                 setVal(timelapse_every_val, ds.timelapse_every);
                 setVal(output_name_val, ds.output_name);
                 setVal(tile_mode_val, opt.tile_mode);
+                setVal(seed_val, opt.seed);
 
                 // Sparsity parameters
                 setVal(sparsify_steps_val, opt.sparsify_steps);
