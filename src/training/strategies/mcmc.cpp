@@ -4,10 +4,11 @@
 
 #include "mcmc.hpp"
 #include "core/logger.hpp"
+#include "core/tensor/internal/memory_pool.hpp"
+#include "core/tensor/internal/tensor_impl.hpp"
 #include "kernels/mcmc_kernels.hpp"
 #include "strategy_utils.hpp"
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <stdexcept>
 
@@ -124,8 +125,8 @@ namespace lfs::training {
             sampled_opacities = Tensor::empty({n_dead}, Device::CUDA, DataType::Float32);
             sampled_scales = Tensor::empty({n_dead, 3}, Device::CUDA, DataType::Float32);
 
-            static thread_local uint64_t seed_counter = 0;
-            const uint64_t seed = static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count()) + seed_counter++;
+            // Generate random seed using deterministic generator
+            uint64_t seed = lfs::core::RandomGenerator::instance().get_next_cuda_seed();
 
             // does multinomial sampling + gathering in one pass
             mcmc::launch_multinomial_sample_and_gather(
@@ -281,8 +282,8 @@ namespace lfs::training {
             sampled_opacities = Tensor::empty({n_new}, Device::CUDA, DataType::Float32);
             sampled_scales = Tensor::empty({n_new, 3}, Device::CUDA, DataType::Float32);
 
-            // Generate random seed
-            auto seed = static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+            // Generate random seed using deterministic generator
+            uint64_t seed = lfs::core::RandomGenerator::instance().get_next_cuda_seed();
 
             // Call fused CUDA kernel
             mcmc::launch_multinomial_sample_all(

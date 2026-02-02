@@ -199,6 +199,10 @@ namespace lfs::training {
         int get_cooldown_counter() const { return cooldown_counter_; }
         const Config& get_config() const { return config_; }
 
+        // Early stopping support
+        int get_num_lr_reductions() const { return num_lr_reductions_; }
+        bool is_at_min_lr() const;
+
         // Serialization for checkpoints
         void serialize(std::ostream& os) const;
         void deserialize(std::istream& is);
@@ -213,6 +217,7 @@ namespace lfs::training {
         int bad_evals_;
         int cooldown_counter_;
         bool initialized_;
+        int num_lr_reductions_ = 0;
     };
 
 } // namespace lfs::training
