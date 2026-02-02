@@ -447,6 +447,12 @@ namespace lfs::training {
         try {
             params_ = params;
 
+            // Set global random seed for reproducibility if specified
+            if (params.optimization.seed != 0) {
+                lfs::core::Tensor::manual_seed(params.optimization.seed);
+                LOG_INFO("Random seed set to {}", params.optimization.seed);
+            }
+
             // Create DatasetConfig for lfs::training::CameraDataset
             lfs::training::DatasetConfig dataset_config;
             dataset_config.resize_factor = params.dataset.resize_factor;
@@ -1507,6 +1513,16 @@ namespace lfs::training {
                         if (plateau_scheduler->step(metrics)) {
                             LOG_INFO("Learning rate reduced to {:.2e} due to plateau",
                                      strategy_->get_optimizer().get_lr());
+                        }
+
+                        // Early stopping when LR at min and still no improvement
+                        if (plateau_scheduler->is_at_min_lr() &&
+                            plateau_scheduler->get_bad_evals() >= plateau_scheduler->get_config().patience) {
+                            LOG_WARN("Early stopping: LR at minimum ({:.2e}) with no improvement "
+                                     "for {} evaluations. Using best checkpoint.",
+                                     plateau_scheduler->get_config().min_lr,
+                                     plateau_scheduler->get_bad_evals());
+                            stop_requested_.store(true);
                         }
                     }
 

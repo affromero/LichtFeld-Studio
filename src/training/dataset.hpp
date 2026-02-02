@@ -81,12 +81,14 @@ namespace lfs::training {
     /// Random sampler that shuffles indices once and iterates through them
     class RandomSampler {
     public:
-        explicit RandomSampler(size_t size) : size_(size),
-                                              index_(0) {
+        explicit RandomSampler(size_t size, uint64_t seed = 0) : size_(size),
+                                                                  index_(0),
+                                                                  seed_(seed) {
             reset();
         }
 
         /// Reset and shuffle indices
+        /// If seed_ is non-zero, uses deterministic shuffle; otherwise uses random_device
         void reset(std::optional<size_t> new_size = std::nullopt) {
             if (new_size) {
                 size_ = *new_size;
@@ -98,13 +100,21 @@ namespace lfs::training {
                 indices_[i] = i;
             }
 
-            // Shuffle using random device
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            std::shuffle(indices_.begin(), indices_.end(), gen);
+            // Shuffle - use deterministic seed if provided, otherwise random_device
+            if (seed_ != 0) {
+                std::mt19937 gen(seed_);
+                std::shuffle(indices_.begin(), indices_.end(), gen);
+            } else {
+                std::random_device rd;
+                std::mt19937 gen(rd());
+                std::shuffle(indices_.begin(), indices_.end(), gen);
+            }
 
             index_ = 0;
         }
+
+        /// Set the seed for deterministic shuffling (0 = non-deterministic)
+        void set_seed(uint64_t seed) { seed_ = seed; }
 
         /// Get next batch of indices
         std::optional<std::vector<size_t>> next(size_t batch_size) {
@@ -124,13 +134,14 @@ namespace lfs::training {
     private:
         size_t size_;
         size_t index_;
+        uint64_t seed_;
         std::vector<size_t> indices_;
     };
 
     /// Infinite random sampler - automatically resets when exhausted
     class InfiniteRandomSampler : public RandomSampler {
     public:
-        explicit InfiniteRandomSampler(size_t size) : RandomSampler(size) {}
+        explicit InfiniteRandomSampler(size_t size, uint64_t seed = 0) : RandomSampler(size, seed) {}
 
         std::optional<std::vector<size_t>> next(size_t batch_size) {
             auto batch = RandomSampler::next(batch_size);

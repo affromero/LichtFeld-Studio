@@ -147,6 +147,9 @@ namespace lfs::core {
 
             std::string config_file = "";
 
+            // Random seed for reproducibility (0 = auto/non-deterministic, >0 = fixed seed)
+            uint64_t seed = 0;
+
             nlohmann::json to_json() const;
             static OptimizationParameters from_json(const nlohmann::json& j);
 

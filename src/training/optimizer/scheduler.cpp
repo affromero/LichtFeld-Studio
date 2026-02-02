@@ -256,7 +256,7 @@ namespace lfs::training {
 
     namespace {
         constexpr uint32_t SCHED_PLATEAU_MAGIC = 0x4C465350; // "LFSP"
-        constexpr uint32_t SCHED_PLATEAU_VERSION = 1;
+        constexpr uint32_t SCHED_PLATEAU_VERSION = 2;        // v2: added num_lr_reductions_
     } // namespace
 
     ReduceLROnPlateau::ReduceLROnPlateau(AdamOptimizer& optimizer, const Config& config)
@@ -330,8 +330,10 @@ namespace lfs::training {
 
             if (new_lr < current_lr) {
                 optimizer_.set_lr(static_cast<float>(new_lr));
-                LOG_INFO("ReduceLROnPlateau: Reducing LR from {:.2e} to {:.2e} (no improvement for {} evals)",
-                         current_lr, new_lr, config_.patience);
+                num_lr_reductions_++;
+                LOG_INFO("ReduceLROnPlateau: Reducing LR from {:.2e} to {:.2e} "
+                         "(reduction #{}, no improvement for {} evals)",
+                         current_lr, new_lr, num_lr_reductions_, config_.patience);
 
                 // Reset counters and enter cooldown
                 bad_evals_ = 0;
@@ -343,6 +345,10 @@ namespace lfs::training {
         }
 
         return false;
+    }
+
+    bool ReduceLROnPlateau::is_at_min_lr() const {
+        return std::abs(optimizer_.get_lr() - config_.min_lr) < 1e-10;
     }
 
     void ReduceLROnPlateau::serialize(std::ostream& os) const {
@@ -366,8 +372,10 @@ namespace lfs::training {
         os.write(reinterpret_cast<const char*>(&cooldown_counter_), sizeof(cooldown_counter_));
         uint8_t initialized = initialized_ ? 1 : 0;
         os.write(reinterpret_cast<const char*>(&initialized), sizeof(initialized));
+        os.write(reinterpret_cast<const char*>(&num_lr_reductions_), sizeof(num_lr_reductions_));
 
-        LOG_DEBUG("Serialized ReduceLROnPlateau: best={:.4f}, bad_evals={}", best_metric_, bad_evals_);
+        LOG_DEBUG("Serialized ReduceLROnPlateau: best={:.4f}, bad_evals={}, lr_reductions={}",
+                  best_metric_, bad_evals_, num_lr_reductions_);
     }
 
     void ReduceLROnPlateau::deserialize(std::istream& is) {
@@ -378,7 +386,7 @@ namespace lfs::training {
         if (magic != SCHED_PLATEAU_MAGIC) {
             throw std::runtime_error("Invalid ReduceLROnPlateau checkpoint: wrong magic");
         }
-        if (version != SCHED_PLATEAU_VERSION) {
+        if (version < 1 || version > SCHED_PLATEAU_VERSION) {
             throw std::runtime_error("Unsupported ReduceLROnPlateau checkpoint version");
         }
 
@@ -402,7 +410,15 @@ namespace lfs::training {
         is.read(reinterpret_cast<char*>(&initialized), sizeof(initialized));
         initialized_ = initialized != 0;
 
-        LOG_DEBUG("Deserialized ReduceLROnPlateau: best={:.4f}, bad_evals={}", best_metric_, bad_evals_);
+        // Version 2+: read num_lr_reductions_
+        if (version >= 2) {
+            is.read(reinterpret_cast<char*>(&num_lr_reductions_), sizeof(num_lr_reductions_));
+        } else {
+            num_lr_reductions_ = 0;
+        }
+
+        LOG_DEBUG("Deserialized ReduceLROnPlateau: best={:.4f}, bad_evals={}, lr_reductions={}",
+                  best_metric_, bad_evals_, num_lr_reductions_);
     }
 
 } // namespace lfs::training
