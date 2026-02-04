@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -95,6 +96,8 @@ namespace lfs::training {
         std::vector<EvalMetrics> all_metrics_;
         const std::filesystem::path csv_path_;
         const std::filesystem::path txt_path_;
+        std::optional<EvalMetrics> best_psnr_;
+        std::optional<EvalMetrics> best_ssim_;
     };
 
     // Main evaluator class that handles all metrics computation and visualization
