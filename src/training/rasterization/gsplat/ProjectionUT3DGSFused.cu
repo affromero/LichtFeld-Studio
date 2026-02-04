@@ -214,8 +214,20 @@ namespace gsplat_lfs {
         float tmp = sqrtf(max(0.01f, b * b - det));
         float v1 = b + tmp; // larger eigenvalue
         float r1 = extend * sqrtf(v1);
-        float radius_x = ceilf(min(extend * sqrtf(covar2d[0][0]), r1));
-        float radius_y = ceilf(min(extend * sqrtf(covar2d[1][1]), r1));
+        float radius_x = ceilf(min(extend * sqrtf(max(0.0f, covar2d[0][0])), r1));
+        float radius_y = ceilf(min(extend * sqrtf(max(0.0f, covar2d[1][1])), r1));
+
+        // Guard against NaN/Inf from numerical instability (corrupted Gaussians)
+        if (isnan(radius_x) || isinf(radius_x) || radius_x > 10000.0f) {
+            radii[idx * 2] = 0;
+            radii[idx * 2 + 1] = 0;
+            return;
+        }
+        if (isnan(radius_y) || isinf(radius_y) || radius_y > 10000.0f) {
+            radii[idx * 2] = 0;
+            radii[idx * 2 + 1] = 0;
+            return;
+        }
 
         if (radius_x <= radius_clip && radius_y <= radius_clip) {
             radii[idx * 2] = 0;
