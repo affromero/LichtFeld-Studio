@@ -325,9 +325,13 @@ namespace lfs::training {
                 std::string params_str(header.params_json_size, '\0');
                 file.read(params_str.data(), static_cast<std::streamsize>(header.params_json_size));
 
+                // Save CLI values to restore after loading checkpoint params
                 const auto cli_data_path = params.dataset.data_path;
                 const auto cli_output_path = params.dataset.output_path;
                 const auto cli_iterations = params.optimization.iterations;
+                const auto cli_eval_steps = params.optimization.eval_steps;
+                const auto cli_save_steps = params.optimization.save_steps;
+                const auto cli_reduce_lr = params.optimization.reduce_lr_on_plateau;
 
                 const auto params_json = nlohmann::json::parse(params_str);
                 if (params_json.contains("optimization")) {
@@ -339,12 +343,20 @@ namespace lfs::training {
                     params.optimization = lfs::core::param::OptimizationParameters::from_json(params_json);
                 }
 
+                // Restore CLI overrides
                 if (!cli_data_path.empty())
                     params.dataset.data_path = cli_data_path;
                 if (!cli_output_path.empty())
                     params.dataset.output_path = cli_output_path;
                 if (cli_iterations > 0)
                     params.optimization.iterations = cli_iterations;
+                if (!cli_eval_steps.empty())
+                    params.optimization.eval_steps = cli_eval_steps;
+                if (!cli_save_steps.empty())
+                    params.optimization.save_steps = cli_save_steps;
+                // Restore reduce_lr_on_plateau if it was enabled in CLI config
+                if (cli_reduce_lr.enabled)
+                    params.optimization.reduce_lr_on_plateau = cli_reduce_lr;
             }
 
             LOG_INFO("Checkpoint loaded: {} ({} Gaussians, iter {})",

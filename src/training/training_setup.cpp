@@ -173,6 +173,21 @@ namespace lfs::training {
                             return std::unexpected(std::format("'{}': invalid SplatData", lfs::core::path_to_utf8(init_file)));
                         }
                     }
+                } else if (params.resume_checkpoint.has_value()) {
+                    // Resuming from checkpoint - create a minimal dummy model that will be overwritten
+                    // by checkpoint data. We need a valid training model for strategy creation.
+                    LOG_INFO("Resume mode: creating placeholder model (checkpoint will provide actual data)");
+                    auto dummy_model = std::make_unique<lfs::core::SplatData>(
+                        0,  // sh_degree
+                        lfs::core::Tensor::zeros({1, 3}, lfs::core::Device::CUDA),  // means
+                        lfs::core::Tensor::zeros({1, 1, 3}, lfs::core::Device::CUDA),  // sh0
+                        lfs::core::Tensor{},  // shN (empty)
+                        lfs::core::Tensor::zeros({1, 3}, lfs::core::Device::CUDA),  // scaling
+                        lfs::core::Tensor::zeros({1, 4}, lfs::core::Device::CUDA),  // rotation
+                        lfs::core::Tensor::zeros({1, 1}, lfs::core::Device::CUDA),  // opacity
+                        load_result->scene_scale);
+                    scene.addSplat("Model", std::move(dummy_model), dataset_id);
+                    scene.setTrainingModelNode("Model");
                 } else {
                     // Add point cloud as a POINTCLOUD node (defer SplatData creation until training starts)
                     // This allows the user to apply crop before training

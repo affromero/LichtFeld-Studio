@@ -719,8 +719,16 @@ namespace lfs::training {
         if (version >= 3) {
             uint8_t has_plateau_scheduler;
             is.read(reinterpret_cast<char*>(&has_plateau_scheduler), sizeof(has_plateau_scheduler));
-            if (has_plateau_scheduler && _plateau_scheduler) {
-                _plateau_scheduler->deserialize(is);
+            if (has_plateau_scheduler) {
+                if (_plateau_scheduler) {
+                    _plateau_scheduler->deserialize(is);
+                } else {
+                    // Checkpoint has plateau scheduler but current config doesn't - skip data
+                    // Create temp scheduler to properly consume the serialized bytes
+                    LOG_WARN("Checkpoint has ReduceLROnPlateau state but not enabled - skipping");
+                    ReduceLROnPlateau temp_scheduler(*_optimizer, ReduceLROnPlateau::Config{});
+                    temp_scheduler.deserialize(is);
+                }
             }
         }
 

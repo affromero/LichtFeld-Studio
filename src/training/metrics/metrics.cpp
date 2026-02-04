@@ -10,8 +10,10 @@
 #include "lfs/kernels/ssim.cuh"
 #include <chrono>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <numeric>
+#include <sstream>
 
 namespace lfs::training {
 
@@ -63,8 +65,50 @@ namespace lfs::training {
         : output_dir_(output_dir),
           csv_path_(output_dir_ / "metrics.csv"),
           txt_path_(output_dir_ / "metrics_report.txt") {
-        // Create CSV header if file doesn't exist
-        if (!std::filesystem::exists(csv_path_)) {
+        // Load existing metrics from CSV if resuming, or create new file
+        if (std::filesystem::exists(csv_path_)) {
+            // Resume mode: load existing metrics to restore best tracking
+            std::ifstream csv_file(csv_path_);
+            if (csv_file.is_open()) {
+                std::string line;
+                // Skip header
+                std::getline(csv_file, line);
+
+                while (std::getline(csv_file, line)) {
+                    if (line.empty()) continue;
+
+                    // Parse CSV: iteration,psnr,ssim,time_per_image,num_gaussians
+                    EvalMetrics metrics{};
+                    std::istringstream ss(line);
+                    std::string token;
+
+                    if (std::getline(ss, token, ',')) metrics.iteration = std::stoi(token);
+                    if (std::getline(ss, token, ',')) metrics.psnr = std::stof(token);
+                    if (std::getline(ss, token, ',')) metrics.ssim = std::stof(token);
+                    if (std::getline(ss, token, ',')) metrics.elapsed_time = std::stof(token);
+                    if (std::getline(ss, token, ',')) metrics.num_gaussians = std::stoi(token);
+
+                    all_metrics_.push_back(metrics);
+
+                    // Track best metrics
+                    if (!best_psnr_ || metrics.psnr > best_psnr_->psnr) {
+                        best_psnr_ = metrics;
+                    }
+                    if (!best_ssim_ || metrics.ssim > best_ssim_->ssim) {
+                        best_ssim_ = metrics;
+                    }
+                }
+                csv_file.close();
+
+                if (!all_metrics_.empty()) {
+                    LOG_INFO("Loaded {} existing metrics from CSV (best PSNR: {:.4f} at iter {})",
+                             all_metrics_.size(),
+                             best_psnr_ ? best_psnr_->psnr : 0.0f,
+                             best_psnr_ ? best_psnr_->iteration : 0);
+                }
+            }
+        } else {
+            // Fresh start: create CSV header
             std::ofstream csv_file;
             if (lfs::core::open_file_for_write(csv_path_, csv_file)) {
                 csv_file << EvalMetrics{}.to_csv_header() << std::endl;

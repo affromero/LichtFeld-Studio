@@ -199,19 +199,46 @@ namespace lfs::core {
         OptimizationParameters OptimizationParameters::from_json(const nlohmann::json& json) {
 
             OptimizationParameters params;
-            params.iterations = json["iterations"];
-            params.means_lr = json["means_lr"];
-            params.shs_lr = json["shs_lr"];
-            params.opacity_lr = json["opacity_lr"];
-            params.scaling_lr = json["scaling_lr"];
-            params.rotation_lr = json["rotation_lr"];
-            params.lambda_dssim = json["lambda_dssim"];
-            params.min_opacity = json["min_opacity"];
-            params.refine_every = json["refine_every"];
-            params.start_refine = json["start_refine"];
-            params.stop_refine = json["stop_refine"];
-            params.grad_threshold = json["grad_threshold"];
-            params.sh_degree = json["sh_degree"];
+            // All fields are optional - use defaults if not present
+            if (json.contains("iterations")) {
+                params.iterations = json["iterations"];
+            }
+            if (json.contains("means_lr")) {
+                params.means_lr = json["means_lr"];
+            }
+            if (json.contains("shs_lr")) {
+                params.shs_lr = json["shs_lr"];
+            }
+            if (json.contains("opacity_lr")) {
+                params.opacity_lr = json["opacity_lr"];
+            }
+            if (json.contains("scaling_lr")) {
+                params.scaling_lr = json["scaling_lr"];
+            }
+            if (json.contains("rotation_lr")) {
+                params.rotation_lr = json["rotation_lr"];
+            }
+            if (json.contains("lambda_dssim")) {
+                params.lambda_dssim = json["lambda_dssim"];
+            }
+            if (json.contains("min_opacity")) {
+                params.min_opacity = json["min_opacity"];
+            }
+            if (json.contains("refine_every")) {
+                params.refine_every = json["refine_every"];
+            }
+            if (json.contains("start_refine")) {
+                params.start_refine = json["start_refine"];
+            }
+            if (json.contains("stop_refine")) {
+                params.stop_refine = json["stop_refine"];
+            }
+            if (json.contains("grad_threshold")) {
+                params.grad_threshold = json["grad_threshold"];
+            }
+            if (json.contains("sh_degree")) {
+                params.sh_degree = json["sh_degree"];
+            }
 
             if (json.contains("opacity_reg")) {
                 params.opacity_reg = json["opacity_reg"];
