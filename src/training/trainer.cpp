@@ -1477,6 +1477,9 @@ namespace lfs::training {
                     LOG_ERROR("Sparsity pruning: {}", result.error());
                 }
 
+                // Track if we saved a checkpoint this iteration (to avoid duplicate saves)
+                bool checkpoint_saved_this_iter = false;
+
                 // Clean evaluation - let the evaluator handle everything
                 if (evaluator_->is_enabled() && evaluator_->should_evaluate(iter)) {
                     evaluator_->print_evaluation_header(iter);
@@ -1493,13 +1496,13 @@ namespace lfs::training {
                         const auto orig_output = params_.dataset.output_path;
                         auto best_result = save_checkpoint(iter);
                         if (best_result) {
-                            // Copy/rename to "best" checkpoint
-                            const auto iter_ckpt = orig_output / "checkpoints" / std::format("ckpt_{:06d}", iter);
-                            const auto best_ckpt = orig_output / "checkpoints" / "best";
+                            checkpoint_saved_this_iter = true;
+                            // Copy to "best.resume" checkpoint
+                            const auto iter_ckpt = orig_output / "checkpoints" / std::format("checkpoint_{}.resume", iter);
+                            const auto best_ckpt = orig_output / "checkpoints" / "best.resume";
                             std::error_code ec;
-                            std::filesystem::remove_all(best_ckpt, ec); // Remove old best if exists
-                            std::filesystem::copy(iter_ckpt, best_ckpt,
-                                std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing, ec);
+                            std::filesystem::copy_file(iter_ckpt, best_ckpt,
+                                std::filesystem::copy_options::overwrite_existing, ec);
                             if (ec) {
                                 LOG_WARN("Failed to copy best checkpoint: {}", ec.message());
                             }
@@ -1558,12 +1561,14 @@ namespace lfs::training {
                     }
                 }
 
-                // Save checkpoint (not PLY) at specified steps
-                for (size_t save_step : params_.optimization.save_steps) {
-                    if (iter == static_cast<int>(save_step) && iter != params_.optimization.iterations) {
-                        auto result = save_checkpoint(iter);
-                        if (!result) {
-                            LOG_WARN("Failed to save checkpoint at iteration {}: {}", iter, result.error());
+                // Save checkpoint (not PLY) at specified steps (skip if already saved for best PSNR)
+                if (!checkpoint_saved_this_iter) {
+                    for (size_t save_step : params_.optimization.save_steps) {
+                        if (iter == static_cast<int>(save_step) && iter != params_.optimization.iterations) {
+                            auto result = save_checkpoint(iter);
+                            if (!result) {
+                                LOG_WARN("Failed to save checkpoint at iteration {}: {}", iter, result.error());
+                            }
                         }
                     }
                 }
@@ -1809,7 +1814,7 @@ namespace lfs::training {
 
             // Generate "best" videos if enabled and best checkpoint exists
             if (video_renderer_ && params_.optimization.enable_video_export) {
-                const auto best_ckpt_path = params_.dataset.output_path / "checkpoints" / "best";
+                const auto best_ckpt_path = params_.dataset.output_path / "checkpoints" / "best.resume";
                 if (std::filesystem::exists(best_ckpt_path)) {
                     auto best_metrics = evaluator_->get_best_psnr();
                     const int best_iter = best_metrics ? best_metrics->iteration : 0;
