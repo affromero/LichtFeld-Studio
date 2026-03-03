@@ -9,7 +9,6 @@
 #include "theme/theme.hpp"
 #include "visualizer_impl.hpp"
 #include <algorithm>
-#include <imgui.h>
 
 namespace lfs::vis::gui {
 
