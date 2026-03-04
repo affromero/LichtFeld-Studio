@@ -10,7 +10,6 @@
 #include "gui/rmlui/elements/loss_graph_element.hpp"
 #include "gui/rmlui/rmlui_render_interface.hpp"
 #include "gui/rmlui/rmlui_system_interface.hpp"
-#include "gui/rmlui/stb_font_engine.hpp"
 #include "internal/resource_paths.hpp"
 
 #include <RmlUi/Core.h>
@@ -38,11 +37,9 @@ namespace lfs::vis::gui {
 
         system_interface_ = std::make_unique<RmlSystemInterface>(window);
         render_interface_ = std::make_unique<RmlRenderInterface>();
-        font_engine_ = std::make_unique<StbFontEngine>();
 
         Rml::SetSystemInterface(system_interface_.get());
         Rml::SetRenderInterface(render_interface_.get());
-        Rml::SetFontEngineInterface(font_engine_.get());
 
         if (!Rml::Initialise()) {
             LOG_ERROR("Failed to initialize RmlUI");
@@ -104,7 +101,6 @@ namespace lfs::vis::gui {
         contexts_.clear();
 
         Rml::Shutdown();
-        font_engine_.reset();
         render_interface_.reset();
         system_interface_.reset();
         initialized_ = false;

@@ -5,7 +5,7 @@
 .mp-warning-text {
     display: block;
     color: #f9e2af;
-    font-size: 12dp;
+    font-size: 9dp;
     margin-bottom: 4dp;
 }
 
@@ -61,7 +61,7 @@
 }
 
 .mp-format-item {
-    font-size: 12dp;
+    font-size: 9dp;
     padding: 1dp 0 1dp 18dp;
 }
 
@@ -94,12 +94,12 @@
 }
 
 .card-name {
-    font-size: 14dp;
+    font-size: 11dp;
     font-weight: bold;
 }
 
 .card-version {
-    font-size: 12dp;
+    font-size: 9dp;
     margin-left: 6dp;
 }
 
@@ -108,29 +108,29 @@
 }
 
 .card-metrics {
-    font-size: 11dp;
+    font-size: 8dp;
     display: block;
     margin-top: 2dp;
 }
 
 .card-tags {
-    font-size: 11dp;
+    font-size: 8dp;
     display: block;
 }
 
 .card-local {
-    font-size: 11dp;
+    font-size: 8dp;
     display: block;
 }
 
 .card-status {
-    font-size: 12dp;
+    font-size: 9dp;
     display: block;
     margin-top: 2dp;
 }
 
 .card-error {
-    font-size: 12dp;
+    font-size: 9dp;
     display: block;
 }
 
@@ -149,7 +149,7 @@
 
 .card-buttons .btn {
     flex: 1;
-    font-size: 12dp;
+    font-size: 9dp;
     padding: 2dp 4dp;
 }
 
@@ -160,7 +160,7 @@
 }
 
 .card-startup-label {
-    font-size: 11dp;
+    font-size: 8dp;
 }
 
 /* ── Card feedback ────────────────────────────────────── */
@@ -176,7 +176,7 @@
 }
 
 .card-progress-text {
-    font-size: 11dp;
+    font-size: 8dp;
     display: block;
 }
 
@@ -208,7 +208,7 @@
 
 .confirm-message {
     display: block;
-    font-size: 13dp;
+    font-size: 10dp;
     text-align: center;
     margin-bottom: 8dp;
 }

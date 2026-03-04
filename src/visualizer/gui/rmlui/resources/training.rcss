@@ -4,6 +4,7 @@
  * Layout: label LEFT, control RIGHT (matching ImGui layout.prop() convention). */
 
 body {
+    font-family: Inter;
     padding: 6dp;
 }
 
@@ -39,7 +40,7 @@ select {
 }
 
 .loss-tick {
-    font-size: 9dp;
+    font-size: 7dp;
     color: #8c8c8c;
     text-align: right;
     white-space: nowrap;

@@ -1,4 +1,5 @@
 body {
+    font-family: Inter;
     padding: 0;
 }
 
@@ -15,18 +16,18 @@ body {
 }
 
 .info-label {
-    font-size: 13dp;
+    font-size: 10dp;
     color: #cdd6f4;
 }
 
 .info-sublabel {
-    font-size: 12dp;
+    font-size: 9dp;
     color: #a6adc8;
     margin-left: 8dp;
 }
 
 .axis-label {
-    font-size: 12dp;
+    font-size: 9dp;
     color: #a6adc8;
     padding: 2dp 6dp 0;
 }

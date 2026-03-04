@@ -49,7 +49,7 @@ in vec2 v_texcoord;
 out vec4 frag_color;
 void main() {
     vec4 tex = texture(u_texture, v_texcoord);
-    frag_color = vec4(tex.rgb * tex.a, tex.a) * v_color;
+    frag_color = tex * v_color;
 }
 )glsl";
 
@@ -328,6 +328,16 @@ void main() {
 
         dimensions.x = w;
         dimensions.y = h;
+
+        // Premultiply alpha to match GL_ONE / GL_ONE_MINUS_SRC_ALPHA blending
+        const int pixel_count = w * h;
+        for (int i = 0; i < pixel_count; ++i) {
+            unsigned char* p = data + i * 4;
+            const unsigned int a = p[3];
+            p[0] = static_cast<unsigned char>((p[0] * a + 127) / 255);
+            p[1] = static_cast<unsigned char>((p[1] * a + 127) / 255);
+            p[2] = static_cast<unsigned char>((p[2] * a + 127) / 255);
+        }
 
         GLuint tex = 0;
         glGenTextures(1, &tex);

@@ -1,4 +1,5 @@
 body {
+    font-family: Inter;
     display: block;
     margin: 0;
     padding: 0;

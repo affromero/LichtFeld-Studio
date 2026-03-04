@@ -18,7 +18,6 @@ namespace lfs::vis::gui {
 
     class RmlSystemInterface;
     class RmlRenderInterface;
-    class StbFontEngine;
 
     class RmlUIManager {
     public:
@@ -41,7 +40,6 @@ namespace lfs::vis::gui {
     private:
         std::unique_ptr<RmlSystemInterface> system_interface_;
         std::unique_ptr<RmlRenderInterface> render_interface_;
-        std::unique_ptr<StbFontEngine> font_engine_;
         std::unordered_map<std::string, Rml::Context*> contexts_;
         SDL_Window* window_ = nullptr;
         float dp_ratio_ = 1.0f;

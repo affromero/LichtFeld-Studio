@@ -4,7 +4,7 @@ div {
 
 body {
     font-family: Inter;
-    font-size: 13dp;
+    font-size: 10dp;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -74,7 +74,7 @@ body {
 }
 
 select {
-    font-size: 13dp;
+    font-size: 10dp;
     padding: 2dp 6dp;
     border-width: 1dp;
 }
@@ -87,7 +87,7 @@ selectbox {
 
 selectbox option {
     padding: 2dp 6dp;
-    font-size: 13dp;
+    font-size: 10dp;
 }
 
 selectbox scrollbarvertical {

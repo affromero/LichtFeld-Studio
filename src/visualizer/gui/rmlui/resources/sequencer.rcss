@@ -1,4 +1,5 @@
 body {
+    font-family: Inter;
     display: block;
     margin: 0;
     padding: 0;
@@ -105,7 +106,7 @@ body {
     position: absolute;
     bottom: -1dp;
     right: 0;
-    font-size: 7dp;
+    font-size: 5dp;
     line-height: 7dp;
     color: rgba(200, 210, 230, 140);
 }
@@ -122,12 +123,12 @@ body {
 }
 
 .transport-label {
-    font-size: 11dp;
+    font-size: 8dp;
     white-space: nowrap;
 }
 
 .transport-info {
-    font-size: 10dp;
+    font-size: 8dp;
     opacity: 0.6;
     flex-shrink: 0;
 }
@@ -163,18 +164,18 @@ body {
 }
 
 .speed-val {
-    font-size: 12dp;
+    font-size: 9dp;
     font-weight: bold;
 }
 
 .speed-text {
-    font-size: 10dp;
+    font-size: 8dp;
     opacity: 0.5;
     margin-left: 3dp;
 }
 
 .dropdown-arrow {
-    font-size: 8dp;
+    font-size: 6dp;
     opacity: 0.4;
     margin-left: 2dp;
 }
@@ -249,7 +250,7 @@ body {
     display: block;
     position: absolute;
     top: 0;
-    font-size: 12dp;
+    font-size: 9dp;
     color: rgba(200, 210, 230, 220);
 }
 
@@ -278,7 +279,7 @@ body {
     left: 0;
     width: 100%;
     text-align: center;
-    font-size: 11dp;
+    font-size: 8dp;
 }
 
 #keyframes {
@@ -354,9 +355,9 @@ body {
 }
 
 #current-time {
-    font-size: 14dp;
+    font-size: 11dp;
 }
 
 #duration {
-    font-size: 14dp;
+    font-size: 11dp;
 }

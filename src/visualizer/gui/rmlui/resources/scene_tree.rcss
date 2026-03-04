@@ -3,7 +3,7 @@
 
 body {
     font-family: Inter;
-    font-size: 14dp;
+    font-size: 11dp;
     color: #cdd6f4;
     left: 0;
     right: 0;
@@ -34,7 +34,7 @@ body {
 
 #filter-input {
     flex: 1;
-    font-size: 13dp;
+    font-size: 10dp;
     color: #cdd6f4;
     background-color: transparent;
     border-width: 0;
@@ -98,7 +98,7 @@ body {
 .expand-toggle {
     display: inline;
     width: 12dp;
-    font-size: 10dp;
+    font-size: 8dp;
     color: #a6adc8;
     cursor: pointer;
     text-align: center;
@@ -167,7 +167,7 @@ body {
 .node-icon {
     display: inline;
     width: 16dp;
-    font-size: 14dp;
+    font-size: 11dp;
     text-align: center;
     margin-right: 4dp;
 }
@@ -185,7 +185,7 @@ body {
 .node-count {
     display: inline;
     color: #6c7086;
-    font-size: 12dp;
+    font-size: 9dp;
     margin-left: 6dp;
 }
 
@@ -202,7 +202,7 @@ body {
     display: inline;
     width: 150dp;
     padding: 2dp 4dp;
-    font-size: 13dp;
+    font-size: 10dp;
     color: #cdd6f4;
     background-color: #313244;
     border-width: 1dp;
@@ -213,5 +213,5 @@ body {
 .section-header {
     display: block;
     padding: 4dp 6dp;
-    font-size: 14dp;
+    font-size: 11dp;
 }

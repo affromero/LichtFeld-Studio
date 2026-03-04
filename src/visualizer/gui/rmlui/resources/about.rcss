@@ -11,12 +11,12 @@
 .info-key {
     width: 120dp;
     color: #a6adc8;
-    font-size: 13dp;
+    font-size: 10dp;
 }
 
 .info-val {
     color: #cdd6f4;
-    font-size: 13dp;
+    font-size: 10dp;
 }
 
 .link-row {
@@ -28,13 +28,13 @@
 .link-label {
     color: #cdd6f4;
     margin-right: 6dp;
-    font-size: 13dp;
+    font-size: 10dp;
 }
 
 .link-url {
     color: #89b4fa;
     cursor: pointer;
-    font-size: 13dp;
+    font-size: 10dp;
 }
 
 .link-url:hover {
@@ -50,10 +50,10 @@
 
 .footer-text {
     color: #a6adc8;
-    font-size: 12dp;
+    font-size: 9dp;
 }
 
 .footer-sep {
     color: #585b70;
-    font-size: 12dp;
+    font-size: 9dp;
 }

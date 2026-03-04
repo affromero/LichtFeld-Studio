@@ -1,4 +1,5 @@
 body {
+    font-family: Inter;
     display: block;
     margin: 0;
     padding: 0;
@@ -27,7 +28,7 @@ body {
 
 .modal-title {
     display: block;
-    font-size: 15dp;
+    font-size: 12dp;
     font-weight: bold;
     text-align: center;
     margin-bottom: 4dp;
@@ -41,7 +42,7 @@ body {
 
 .modal-content {
     display: block;
-    font-size: 13dp;
+    font-size: 10dp;
     text-align: center;
     max-height: 400dp;
     overflow: auto;
@@ -82,7 +83,7 @@ body {
 
 /* Content helper classes */
 .dim-text {
-    font-size: 13dp;
+    font-size: 10dp;
 }
 
 .error-text {

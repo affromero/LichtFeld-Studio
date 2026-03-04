@@ -220,7 +220,9 @@ namespace lfs::vis::gui {
                 if (!is_font_valid(path))
                     return nullptr;
                 const std::string path_utf8 = lfs::core::path_to_utf8(path);
-                return io.Fonts->AddFontFromFileTTF(path_utf8.c_str(), size);
+                ImFontConfig config;
+                config.PixelSnapH = true;
+                return io.Fonts->AddFontFromFileTTF(path_utf8.c_str(), size, &config);
             };
 
             const auto merge_cjk = [&](const float size) {
@@ -228,6 +230,7 @@ namespace lfs::vis::gui {
                     ImFontConfig config;
                     config.MergeMode = true;
                     config.OversampleH = 1;
+                    config.PixelSnapH = true;
                     const std::string japanese_path_utf8 = lfs::core::path_to_utf8(japanese_path);
                     io.Fonts->AddFontFromFileTTF(japanese_path_utf8.c_str(), size, &config,
                                                  io.Fonts->GetGlyphRangesJapanese());
@@ -238,6 +241,7 @@ namespace lfs::vis::gui {
                     ImFontConfig config;
                     config.MergeMode = true;
                     config.OversampleH = 1;
+                    config.PixelSnapH = true;
                     const std::string korean_path_utf8 = lfs::core::path_to_utf8(korean_path);
                     io.Fonts->AddFontFromFileTTF(korean_path_utf8.c_str(), size, &config,
                                                  io.Fonts->GetGlyphRangesKorean());
@@ -283,6 +287,7 @@ namespace lfs::vis::gui {
                 for (int i = 0; i < FontSet::MONO_SIZE_COUNT; ++i) {
                     ImFontConfig config;
                     config.GlyphRanges = GLYPH_RANGES;
+                    config.PixelSnapH = true;
                     const float size = t.fonts.base_size * scale * MONO_SCALES[i];
                     mono_fonts_[i] = io.Fonts->AddFontFromFileTTF(mono_path_utf8.c_str(), size, &config);
                     mono_font_scales_[i] = MONO_SCALES[i];

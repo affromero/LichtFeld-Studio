@@ -15,18 +15,18 @@
 }
 
 .im-label {
-    font-size: 13dp;
+    font-size: 10dp;
     padding: 0 0 0 2dp;
 }
 
 .im-text-wrapped {
-    font-size: 13dp;
+    font-size: 10dp;
     padding: 0 2dp;
     word-break: break-word;
 }
 
 .im-bullet {
-    font-size: 13dp;
+    font-size: 10dp;
     padding: 0 0 0 8dp;
 }
 
@@ -46,13 +46,13 @@
 }
 
 .im-radio-dot {
-    font-size: 14dp;
+    font-size: 11dp;
     width: 16dp;
     text-align: center;
 }
 
 .im-radio-label {
-    font-size: 13dp;
+    font-size: 10dp;
 }
 
 /* Table layout */
@@ -107,7 +107,7 @@
     border-color: rgba(88, 91, 112, 128);
     border-radius: 3dp;
     padding: 4dp 8dp;
-    font-size: 12dp;
+    font-size: 9dp;
     max-width: 300dp;
     pointer-events: none;
 }
@@ -182,7 +182,7 @@
 }
 
 .im-popup-title {
-    font-size: 15dp;
+    font-size: 12dp;
     font-weight: bold;
     padding-bottom: 8dp;
     border-bottom-width: 1dp;
