@@ -1074,7 +1074,9 @@ namespace lfs::vis::gui {
         python::set_viewport_bounds(viewport_layout_.pos.x, viewport_layout_.pos.y,
                                     viewport_layout_.size.x, viewport_layout_.size.y);
 
-        reg.draw_panels(PanelSpace::Floating, draw_ctx, &panel_input);
+        PanelInputState floating_input = panel_input;
+        floating_input.bg_draw_list = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
+        reg.draw_panels(PanelSpace::Floating, draw_ctx, &floating_input);
         reg.draw_panels(PanelSpace::Dockable, draw_ctx);
 
         gizmo_manager_.updateToolState(ctx, ui_hidden_);
