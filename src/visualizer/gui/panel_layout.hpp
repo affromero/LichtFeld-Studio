@@ -96,7 +96,7 @@ namespace lfs::vis::gui {
         void renderDockedPythonConsole(const UIContext& ctx, float panel_x, float panel_h,
                                        const PanelInputState& input, const ScreenState& screen);
 
-        float right_panel_width_ = 300.0f;
+        float right_panel_width_ = 340.0f;
         float scene_panel_ratio_ = 0.4f;
 
         float python_console_width_ = -1.0f;
