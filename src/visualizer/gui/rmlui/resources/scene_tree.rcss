@@ -54,13 +54,17 @@ body {
 .tree-row {
     display: block;
     width: auto;
+    box-sizing: border-box;
     padding: 1dp 4dp;
+    border-left-width: 2dp;
+    border-left-color: rgba(0, 0, 0, 0);
     cursor: pointer;
-    transition: background-color 0.1s quadratic-out;
 }
 
-.tree-row:hover {
-    background-color: #313244;
+.tree-row:hover,
+.tree-row.hovered {
+    background-color: rgba(137, 180, 250, 28);
+    border-left-color: rgba(137, 180, 250, 255);
 }
 
 .tree-row.even {
@@ -73,11 +77,13 @@ body {
 
 /* selected MUST come after even/odd for cascade */
 .tree-row.selected {
-    background-color: #3c5a8a;
+    background-color: #5572a3;
 }
 
-.tree-row.selected:hover {
-    background-color: #4a6a9a;
+.tree-row.selected:hover,
+.tree-row.selected.hovered {
+    background-color: #6483b7;
+    border-left-color: rgba(180, 208, 251, 255);
 }
 
 .tree-row.drop-target {

@@ -94,8 +94,18 @@ namespace lfs::vis::gui {
     }
 
     using rml_theme::colorToRml;
+    using rml_theme::colorToRmlAlpha;
 
     namespace {
+        ImVec4 brighten(const ImVec4& color, float factor) {
+            return {
+                color.x + (1.0f - color.x) * factor,
+                color.y + (1.0f - color.y) * factor,
+                color.z + (1.0f - color.z) * factor,
+                color.w
+            };
+        }
+
         Rml::Input::KeyIdentifier sdlScancodeToRml(int scancode) {
             // clang-format off
             switch (scancode) {
@@ -172,30 +182,38 @@ namespace lfs::vis::gui {
         const auto text = colorToRml(p.text);
         const auto text_dim = colorToRml(p.text_dim);
         const auto surface = colorToRml(p.surface);
-        const auto surface_bright = colorToRml(p.surface_bright);
         const auto primary = colorToRml(p.primary);
+        const auto primary_dim = colorToRml(p.primary_dim);
         const auto border = colorToRml(p.border);
         const auto row_even = colorToRml(p.row_even);
         const auto row_odd = colorToRml(p.row_odd);
+        const auto row_hover = colorToRmlAlpha(p.primary, 0.12f);
+        const auto row_hover_border = colorToRml(p.primary);
+        const auto row_hover_border_selected = colorToRml(p.primary_dim);
+        const auto row_selected = colorToRml(brighten(p.primary, 0.14f));
+        const auto row_selected_hover = colorToRml(brighten(p.primary, 0.24f));
 
         return std::format(
             "body {{ color: {0}; background-color: {2}; }}\n"
-            "#search-container {{ background-color: {2}; border-color: {5}; }}\n"
+            "#search-container {{ background-color: {2}; border-color: {4}; }}\n"
             "#filter-input {{ color: {0}; }}\n"
-            ".tree-row.even {{ background-color: {6}; }}\n"
-            ".tree-row.odd {{ background-color: {7}; }}\n"
-            ".tree-row:hover {{ background-color: {3}; }}\n"
-            ".tree-row.selected {{ background-color: {4}; }}\n"
-            ".tree-row.selected:hover {{ background-color: {4}; }}\n"
-            ".tree-row.drop-target {{ border-width: 1dp; border-color: {4}; }}\n"
+            ".tree-row.even {{ background-color: {5}; }}\n"
+            ".tree-row.odd {{ background-color: {6}; }}\n"
+            ".tree-row:hover {{ background-color: {7}; border-left-color: {8}; }}\n"
+            ".tree-row.hovered {{ background-color: {7}; border-left-color: {8}; }}\n"
+            ".tree-row.selected {{ background-color: {9}; }}\n"
+            ".tree-row.selected:hover {{ background-color: {10}; border-left-color: {11}; }}\n"
+            ".tree-row.selected.hovered {{ background-color: {10}; border-left-color: {11}; }}\n"
+            ".tree-row.drop-target {{ border-width: 1dp; border-color: {3}; }}\n"
             ".expand-toggle {{ color: {1}; }}\n"
             ".expand-toggle:hover {{ color: {0}; }}\n"
             ".node-name {{ color: {0}; }}\n"
             ".node-name.training-disabled {{ color: {1}; }}\n"
             ".node-count {{ color: {1}; }}\n"
-            ".rename-input {{ color: {0}; background-color: {2}; border-width: 1dp; border-color: {4}; }}\n"
+            ".rename-input {{ color: {0}; background-color: {2}; border-width: 1dp; border-color: {3}; }}\n"
             ".row-icon {{ image-color: {0}; }}\n",
-            text, text_dim, surface, surface_bright, primary, border, row_even, row_odd);
+            text, text_dim, surface, primary, border, row_even, row_odd,
+            row_hover, row_hover_border, row_selected, row_selected_hover, row_hover_border_selected);
     }
 
     bool RmlPanelHost::syncThemeProperties() {
