@@ -163,7 +163,7 @@ namespace lfs::vis::gui {
 
                         float px = snap.float_x;
                         float py = snap.float_y;
-                        if (px < 0) {
+                        if (std::isnan(px) || std::isnan(py)) {
                             px = vp->WorkPos.x + (vp->WorkSize.x - w) * 0.5f;
                             py = vp->WorkPos.y + (vp->WorkSize.y - h) * 0.5f;
                         }
@@ -257,6 +257,15 @@ namespace lfs::vis::gui {
                                     if (cap_h > 0 && pi.float_user_height > cap_h)
                                         pi.float_user_height = cap_h;
                                 }
+
+                                constexpr float kTitleH = 28.0f;
+                                constexpr float kVisibleFrac = 0.1f;
+                                const float vx = vp->WorkPos.x;
+                                const float vy = vp->WorkPos.y;
+                                const float vw = vp->WorkSize.x;
+                                const float vh = vp->WorkSize.y;
+                                px = std::clamp(px, vx - w * (1.0f - kVisibleFrac), vx + vw - w * kVisibleFrac);
+                                py = std::clamp(py, vy, vy + vh - kTitleH);
 
                                 pi.float_x = px;
                                 pi.float_y = py;
@@ -526,8 +535,8 @@ namespace lfs::vis::gui {
             if (p.idname == idname) {
                 p.enabled = enabled;
                 if (enabled && p.space == PanelSpace::Floating) {
-                    p.float_x = -1;
-                    p.float_y = -1;
+                    p.float_x = NAN;
+                    p.float_y = NAN;
                 }
                 return;
             }

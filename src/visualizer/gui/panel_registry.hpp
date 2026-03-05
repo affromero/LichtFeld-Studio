@@ -9,6 +9,7 @@
 #include <core/export.hpp>
 
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -98,8 +99,8 @@ namespace lfs::vis::gui {
         bool error_disabled = false;
         float initial_width = 0;
         float initial_height = 0;
-        float float_x = -1;
-        float float_y = -1;
+        float float_x = NAN;
+        float float_y = NAN;
         bool float_dragging = false;
         float float_drag_ox = 0;
         float float_drag_oy = 0;
