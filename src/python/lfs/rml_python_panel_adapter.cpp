@@ -22,7 +22,8 @@ namespace lfs::vis::gui {
             std::lock_guard lock(mutex);
             if (warned_features.emplace(feature).second) {
                 LOG_WARN("Rml transition: '{}' is a legacy ImGui compatibility path. "
-                         "Keep it for compatibility, but do not add new usage.", feature);
+                         "Keep it for compatibility, but do not add new usage.",
+                         feature);
             }
         }
     } // namespace

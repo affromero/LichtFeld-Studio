@@ -10,8 +10,8 @@
 
 #include <RmlUi/Core/ElementDocument.h>
 #include <cassert>
-#include <imgui.h>
 #include <mutex>
+#include <imgui.h>
 
 namespace lfs::vis::gui {
 

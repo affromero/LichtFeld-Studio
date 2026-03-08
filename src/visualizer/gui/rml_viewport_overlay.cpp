@@ -14,8 +14,8 @@
 #include "gui/rmlui/rmlui_manager.hpp"
 #include "gui/rmlui/rmlui_render_interface.hpp"
 #include "internal/resource_paths.hpp"
-#include "python/ui_hooks.hpp"
 #include "python/python_runtime.hpp"
+#include "python/ui_hooks.hpp"
 #include "theme/theme.hpp"
 
 #include <RmlUi/Core.h>
@@ -218,7 +218,6 @@ namespace lfs::vis::gui {
             render->SetTargetFramebuffer(0);
             fbo_.unbind(prev_fbo);
         }
-
     }
 
     void RmlViewportOverlay::compositeToScreen(const int screen_w, const int screen_h) const {

@@ -16,9 +16,9 @@
 #include <chrono>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
-#include <imgui.h>
 #include <memory>
 #include <optional>
+#include <imgui.h>
 #include <ImGuizmo.h>
 
 namespace lfs::vis::gui {

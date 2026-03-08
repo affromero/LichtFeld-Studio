@@ -553,7 +553,6 @@ namespace lfs::vis::gui {
             render_iface->SetTargetFramebuffer(0);
             fbo_.unbind(prev_fbo);
         }
-
     }
 
     void RmlSequencerOverlay::compositeToScreen(const int screen_w, const int screen_h) const {

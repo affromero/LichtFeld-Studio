@@ -14,9 +14,9 @@
 #include "internal/resource_paths.hpp"
 
 #include <RmlUi/Core.h>
-#include <RmlUi/Debugger.h>
 #include <RmlUi/Core/ElementInstancer.h>
 #include <RmlUi/Core/Factory.h>
+#include <RmlUi/Debugger.h>
 #include <cassert>
 #include <cstdlib>
 #include <filesystem>

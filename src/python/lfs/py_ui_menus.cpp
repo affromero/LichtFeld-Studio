@@ -9,9 +9,9 @@
 #include "py_ui.hpp"
 
 #include <algorithm>
-#include <imgui.h>
 #include <mutex>
 #include <unordered_set>
+#include <imgui.h>
 
 namespace lfs::python {
 
@@ -137,7 +137,8 @@ namespace lfs::python {
             if (warned.emplace(idname).second) {
                 LOG_WARN("Rml transition: menu '{}' uses legacy draw(layout) fallback. "
                          "Keep it for compatibility, but prefer declarative menu_items() "
-                         "for new or touched menus.", idname);
+                         "for new or touched menus.",
+                         idname);
             }
         }
 
