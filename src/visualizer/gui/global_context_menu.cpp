@@ -9,7 +9,6 @@
 #include "gui/global_context_menu.hpp"
 #include "core/logger.hpp"
 #include "gui/panel_layout.hpp"
-#include "gui/rmlui/rml_input_utils.hpp"
 #include "gui/rmlui/rml_theme.hpp"
 #include "gui/rmlui/rmlui_manager.hpp"
 #include "gui/rmlui/rmlui_render_interface.hpp"
