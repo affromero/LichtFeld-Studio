@@ -23,8 +23,6 @@ SCROLL_DURATION = 0.15
 FILMSTRIP_WINDOW = 40
 THUMB_MAX_PX = 256
 
-_CHANNEL_NAMES = {1: "Gray", 2: "Gray+A", 3: "RGB", 4: "RGBA"}
-
 _instance = None
 
 
@@ -416,6 +414,7 @@ class ImagePreviewPanel(Panel):
     def _refresh_ui(self, doc):
         has_images = bool(self._image_paths)
 
+        self._update_localized_labels(doc)
         self._update_filmstrip(doc, has_images)
         self._update_sidebar(doc, has_images)
         self._update_nav_arrows(doc, has_images)
@@ -591,6 +590,33 @@ class ImagePreviewPanel(Panel):
             cls = "nav-arrow hidden" if self._current_index >= len(self._image_paths) - 1 else "nav-arrow"
             next_el.set_attribute("class", cls)
 
+    def _update_localized_labels(self, doc):
+        tr = lf.ui.tr
+
+        for element_id, text in {
+            "meta-width-label": tr("image_preview.width_label"),
+            "meta-height-label": tr("image_preview.height_label"),
+            "meta-megapixels-label": tr("image_preview.megapixels_label"),
+            "meta-aspect-label": tr("image_preview.aspect_label"),
+            "meta-channels-label": tr("image_preview.channels_label"),
+            "meta-format-label": tr("image_preview.format_label"),
+            "meta-size-label": tr("image_preview.size_label"),
+            "meta-path-label": tr("image_preview.path_label"),
+            "hk-navigate": tr("image_preview.navigate"),
+            "hk-fit": tr("image_preview.fit"),
+            "hk-zoom": tr("image_preview.zoom"),
+            "hk-info": tr("image_preview.info"),
+            "hk-thumbnails": tr("image_preview.thumbnails"),
+            "hk-mask": tr("image_preview.mask"),
+            "hk-reset": tr("common.reset"),
+            "hk-close": tr("common.close"),
+        }.items():
+            _set_text(doc, element_id, text)
+
+        copy_btn = doc.get_element_by_id("btn-copy-path")
+        if copy_btn:
+            copy_btn.set_attribute("title", tr("image_preview.copy_full_path"))
+
     def _update_sidebar(self, doc, has_images: bool):
         sidebar = doc.get_element_by_id("sidebar")
         if not sidebar:
@@ -625,7 +651,7 @@ class ImagePreviewPanel(Panel):
                 for eid in ("sidebar-width", "sidebar-height", "sidebar-mp", "sidebar-aspect"):
                     _set_text(doc, eid, "")
 
-            _set_text(doc, "sidebar-channels", _CHANNEL_NAMES.get(c, str(c)))
+            _set_text(doc, "sidebar-channels", self._get_channel_label(c))
 
             _set_text(doc, "sidebar-format", ext)
             if path.exists():
@@ -691,7 +717,7 @@ class ImagePreviewPanel(Panel):
         _set_text(doc, "st-w", f"W {w}" if w > 0 else "")
         _set_text(doc, "st-h", f"H {h}" if h > 0 else "")
         _set_text(doc, "st-ch", f"CH {c}")
-        _set_text(doc, "st-zoom", f"Zoom {self._get_zoom_display()}")
+        _set_text(doc, "st-zoom", f"{lf.ui.tr('image_preview.zoom')} {self._get_zoom_display()}")
         _set_text(doc, "st-counter", f"{self._current_index + 1} / {len(self._image_paths)}")
 
     # -- Keyboard --
@@ -762,6 +788,18 @@ class ImagePreviewPanel(Panel):
         if self._fit_to_window:
             return lf.ui.tr("image_preview.fit")
         return f"{self._zoom * 100:.0f}%"
+
+    @staticmethod
+    def _get_channel_label(channels: int) -> str:
+        if channels == 1:
+            return lf.ui.tr("image_preview.channel_gray")
+        if channels == 2:
+            return lf.ui.tr("image_preview.channel_gray_alpha")
+        if channels == 3:
+            return "RGB"
+        if channels == 4:
+            return "RGBA"
+        return str(channels)
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:
