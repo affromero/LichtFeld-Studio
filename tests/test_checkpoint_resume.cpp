@@ -136,9 +136,7 @@ namespace {
 
     std::string TestName(const ::testing::TestParamInfo<CheckpointResumeTest::ParamType>& info) {
         auto name = std::format("{}_{}", std::get<0>(info.param), std::get<1>(info.param));
-        std::replace_if(name.begin(), name.end(), [](const unsigned char c) {
-            return !std::isalnum(c);
-        }, '_');
+        std::replace_if(name.begin(), name.end(), [](const unsigned char c) { return !std::isalnum(c); }, '_');
         return name;
     }
 
