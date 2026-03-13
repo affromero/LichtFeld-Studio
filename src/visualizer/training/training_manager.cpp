@@ -624,6 +624,14 @@ namespace lfs::vis {
         if (!trainer_)
             return;
 
+        if (trainer_->isInitialized() && trainer_->getParams().resume_checkpoint.has_value()) {
+            if (auto* const param_mgr = services().paramsOrNull()) {
+                param_mgr->importTrainingParams(trainer_->getParams());
+            }
+            LOG_DEBUG("Ignoring parameter updates for checkpoint-backed trainer");
+            return;
+        }
+
         auto params = trainer_->getParams();
         params.dataset = pending_dataset_params_;
 

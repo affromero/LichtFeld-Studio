@@ -1865,12 +1865,9 @@ namespace lfs::vis {
                 dataset_path_ = checkpoint_params.dataset.data_path;
             }
 
-            // when loading checkpoint with sparsity enabled, adjust total iterations
-            checkpoint_params.optimization.iterations = checkpoint_params.optimization.enable_sparsity ? checkpoint_params.optimization.iterations - checkpoint_params.optimization.sparsify_steps : checkpoint_params.optimization.iterations;
-
-            // Update current params from checkpoint (session params remain unchanged)
+            // Keep the viewer's editable state aligned with the restored trainer state.
             if (auto* param_mgr = services().paramsOrNull()) {
-                param_mgr->setCurrentParams(checkpoint_params.optimization);
+                param_mgr->importTrainingParams(checkpoint_params);
             }
 
             LOG_INFO("Checkpoint loaded: {} gaussians, iteration {}", num_gaussians, checkpoint_iteration);

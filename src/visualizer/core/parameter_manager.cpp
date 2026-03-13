@@ -75,9 +75,6 @@ namespace lfs::vis {
             LOG_ERROR("Failed to load params: {}", result.error());
             return;
         }
-        if (session_defaults_set_)
-            return;
-
         const auto& opt = params.optimization;
         if (!opt.strategy.empty())
             setActiveStrategy(opt.strategy);
@@ -107,7 +104,6 @@ namespace lfs::vis {
         dataset_config_.invert_masks = ds.invert_masks;
         dataset_config_.mask_threshold = ds.mask_threshold;
 
-        session_defaults_set_ = true;
         LOG_INFO("Session: strategy={}, iter={}, resize={}", opt.strategy, opt.iterations, dataset_config_.resize_factor);
     }
 
@@ -142,6 +138,38 @@ namespace lfs::vis {
             adc_current_ = params;
         }
         LOG_INFO("Imported params: strategy={}, iter={}, sh={}", params.strategy, params.iterations, params.sh_degree);
+    }
+
+    void ParameterManager::importTrainingParams(const lfs::core::param::TrainingParameters& params) {
+        if (const auto result = ensureLoaded(); !result) {
+            LOG_ERROR("Failed to load params: {}", result.error());
+            return;
+        }
+
+        std::lock_guard lock(params_mutex_);
+        if (!params.optimization.strategy.empty()) {
+            setActiveStrategy(params.optimization.strategy);
+        }
+
+        if (active_strategy_ == "mcmc") {
+            mcmc_session_ = params.optimization;
+            mcmc_current_ = params.optimization;
+        } else if (active_strategy_ == "igs+") {
+            igs_session_ = params.optimization;
+            igs_current_ = params.optimization;
+        } else {
+            adc_session_ = params.optimization;
+            adc_current_ = params.optimization;
+        }
+
+        dataset_config_ = params.dataset;
+        dirty_.store(false, std::memory_order_release);
+
+        LOG_INFO("Imported training params: strategy={}, iter={}, images={}, resize={}",
+                 params.optimization.strategy,
+                 params.optimization.iterations,
+                 dataset_config_.images,
+                 dataset_config_.resize_factor);
     }
 
     void ParameterManager::setActiveStrategy(const std::string_view strategy) {

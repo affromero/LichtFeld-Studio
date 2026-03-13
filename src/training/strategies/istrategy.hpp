@@ -60,6 +60,9 @@ namespace lfs::training {
         // Reserve optimizer capacity for future growth (e.g., after checkpoint load)
         virtual void reserve_optimizer_capacity(size_t capacity) = 0;
 
+        // Update the strategy's cached optimization parameters after checkpoint params are resolved.
+        virtual void set_optimization_params(const lfs::core::param::OptimizationParameters&) {}
+
         // Optional hook for strategies that need the training dataset (e.g., for view-based scoring)
         virtual void set_training_dataset(std::shared_ptr<CameraDataset>) {}
 

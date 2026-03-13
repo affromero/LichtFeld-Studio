@@ -108,9 +108,6 @@ namespace lfs::app {
 
                     checkpoint_params.resume_checkpoint = *params->resume_checkpoint;
 
-                    if (params->optimization.iterations != checkpoint_params.optimization.iterations)
-                        checkpoint_params.optimization.iterations = params->optimization.iterations;
-
                     auto trainer = std::make_unique<training::Trainer>(scene);
 
                     if (!params->python_scripts.empty()) {

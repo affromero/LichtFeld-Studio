@@ -4,6 +4,8 @@
 
 #include "improved_gs_plus.hpp"
 
+#include "core/logger.hpp"
+#include "core/tensor/internal/tensor_serialization.hpp"
 #include "edge_rasterizer.hpp"
 #include "gsplat_rasterizer.hpp"
 #include "strategy_utils.hpp"
@@ -20,6 +22,9 @@
 namespace lfs::training {
 
     namespace {
+        constexpr uint32_t IGS_PLUS_MAGIC = 0x4C464947; // "LFIG"
+        constexpr uint32_t IGS_PLUS_VERSION = 1;
+
         // Returns true if shape has any zero dimension (e.g., ShN at sh-degree 0)
         [[nodiscard]] inline bool has_zero_dimension(const lfs::core::TensorShape& shape) {
             for (size_t i = 0; i < shape.rank(); ++i) {
@@ -171,23 +176,14 @@ namespace lfs::training {
             const int idx = view_indices[view];
             lfs::core::Camera* cam = _views->get_camera(idx);
 
-            lfs::core::Tensor image;
-            if (_image_loader) {
-                lfs::io::LoadParams params;
-                params.resize_factor = _views->get_resize_factor();
-                params.max_width = _views->get_max_width();
-                if (cam->is_undistort_prepared()) {
-                    params.undistort = &cam->undistort_params();
-                }
-                auto cached = _image_loader->decode_cached_image(cam->image_path(), params);
-                if (cached) {
-                    image = std::move(*cached);
-                }
+            assert(_image_loader && "set_image_loader() must be called before training");
+            lfs::io::LoadParams params;
+            params.resize_factor = _views->get_resize_factor();
+            params.max_width = _views->get_max_width();
+            if (cam->is_undistort_prepared()) {
+                params.undistort = &cam->undistort_params();
             }
-            if (!image.is_valid()) {
-                const CameraExample fallback = _views->get(idx);
-                image = fallback.data.image;
-            }
+            lfs::core::Tensor image = _image_loader->load_image_immediate(cam->image_path(), params);
 
             const int img_h = image.shape()[1];
             const int img_w = image.shape()[2];
@@ -691,11 +687,125 @@ namespace lfs::training {
 
     // ===== Serialization =====
     void ImprovedGSPlus::serialize(std::ostream& os) const {
-        return;
+        os.write(reinterpret_cast<const char*>(&IGS_PLUS_MAGIC), sizeof(IGS_PLUS_MAGIC));
+        os.write(reinterpret_cast<const char*>(&IGS_PLUS_VERSION), sizeof(IGS_PLUS_VERSION));
+
+        if (_optimizer) {
+            uint8_t has_optimizer = 1;
+            os.write(reinterpret_cast<const char*>(&has_optimizer), sizeof(has_optimizer));
+            _optimizer->serialize(os);
+        } else {
+            uint8_t has_optimizer = 0;
+            os.write(reinterpret_cast<const char*>(&has_optimizer), sizeof(has_optimizer));
+        }
+
+        if (_scheduler) {
+            uint8_t has_scheduler = 1;
+            os.write(reinterpret_cast<const char*>(&has_scheduler), sizeof(has_scheduler));
+            _scheduler->serialize(os);
+        } else {
+            uint8_t has_scheduler = 0;
+            os.write(reinterpret_cast<const char*>(&has_scheduler), sizeof(has_scheduler));
+        }
+
+        os.write(reinterpret_cast<const char*>(&_initial_points), sizeof(_initial_points));
+        os.write(reinterpret_cast<const char*>(&_current_step), sizeof(_current_step));
+        os.write(reinterpret_cast<const char*>(&_total_steps), sizeof(_total_steps));
+
+        const auto budget_size = static_cast<uint32_t>(_budget_schedule.size());
+        os.write(reinterpret_cast<const char*>(&budget_size), sizeof(budget_size));
+        if (budget_size > 0) {
+            os.write(reinterpret_cast<const char*>(_budget_schedule.data()),
+                     static_cast<std::streamsize>(budget_size * sizeof(_budget_schedule.front())));
+        }
+
+        const uint8_t has_free_mask = _free_mask.is_valid() ? 1 : 0;
+        os.write(reinterpret_cast<const char*>(&has_free_mask), sizeof(has_free_mask));
+        if (has_free_mask) {
+            os << _free_mask;
+        }
+
+        LOG_DEBUG("Serialized ImprovedGSPlus");
     }
 
     void ImprovedGSPlus::deserialize(std::istream& is) {
-        return;
+        const auto start = is.tellg();
+
+        uint32_t magic = 0;
+        uint32_t version = 0;
+        is.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        is.read(reinterpret_cast<char*>(&version), sizeof(version));
+
+        if (!is.good() || magic != IGS_PLUS_MAGIC) {
+            is.clear();
+            is.seekg(start);
+
+            LOG_WARN("Legacy igs+ checkpoint without strategy state; rebuilding optimizer state");
+
+            _optimizer = create_optimizer(*_splat_data, *_params);
+            _optimizer->allocate_gradients(_params->max_cap > 0 ? static_cast<size_t>(_params->max_cap) : 0);
+
+            const double gamma = std::pow(0.1, 1.0 / _params->iterations);
+            _scheduler = std::make_unique<ExponentialLR>(
+                *_optimizer, gamma, std::vector<ParamType>{ParamType::Means, ParamType::Scaling});
+
+            const size_t capacity = _params->max_cap > 0 ? static_cast<size_t>(_params->max_cap)
+                                                         : static_cast<size_t>(_splat_data->size());
+            _free_mask = lfs::core::Tensor::zeros_bool({capacity}, _splat_data->means().device());
+            _precomputed_grads = lfs::core::Tensor();
+            _precomputed_scores = lfs::core::Tensor();
+            _precompute_valid = false;
+            _current_step = 0;
+            _budget_schedule = get_count_array();
+            return;
+        }
+
+        if (version > IGS_PLUS_VERSION) {
+            throw std::runtime_error("Unsupported ImprovedGSPlus checkpoint version: " + std::to_string(version));
+        }
+
+        uint8_t has_optimizer = 0;
+        is.read(reinterpret_cast<char*>(&has_optimizer), sizeof(has_optimizer));
+        if (has_optimizer && _optimizer) {
+            _optimizer->deserialize(is);
+        }
+
+        uint8_t has_scheduler = 0;
+        is.read(reinterpret_cast<char*>(&has_scheduler), sizeof(has_scheduler));
+        if (has_scheduler && _scheduler) {
+            _scheduler->deserialize(is);
+        }
+
+        is.read(reinterpret_cast<char*>(&_initial_points), sizeof(_initial_points));
+        is.read(reinterpret_cast<char*>(&_current_step), sizeof(_current_step));
+        is.read(reinterpret_cast<char*>(&_total_steps), sizeof(_total_steps));
+
+        uint32_t budget_size = 0;
+        is.read(reinterpret_cast<char*>(&budget_size), sizeof(budget_size));
+        _budget_schedule.resize(budget_size);
+        if (budget_size > 0) {
+            is.read(reinterpret_cast<char*>(_budget_schedule.data()),
+                    static_cast<std::streamsize>(budget_size * sizeof(_budget_schedule.front())));
+        }
+
+        uint8_t has_free_mask = 0;
+        is.read(reinterpret_cast<char*>(&has_free_mask), sizeof(has_free_mask));
+        if (has_free_mask) {
+            is >> _free_mask;
+            if (_splat_data->means().device() == lfs::core::Device::CUDA) {
+                _free_mask = _free_mask.cuda();
+            }
+        } else {
+            const size_t capacity = _params->max_cap > 0 ? static_cast<size_t>(_params->max_cap)
+                                                         : static_cast<size_t>(_splat_data->size());
+            _free_mask = lfs::core::Tensor::zeros_bool({capacity}, _splat_data->means().device());
+        }
+
+        _precomputed_grads = lfs::core::Tensor();
+        _precomputed_scores = lfs::core::Tensor();
+        _precompute_valid = false;
+
+        LOG_DEBUG("Deserialized ImprovedGSPlus (version {})", version);
     }
 
 } // namespace lfs::training

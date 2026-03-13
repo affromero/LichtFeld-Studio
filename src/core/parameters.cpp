@@ -99,6 +99,7 @@ namespace lfs::core {
             opt_json["save_steps"] = save_steps;
             opt_json["enable_eval"] = enable_eval;
             opt_json["enable_save_eval_images"] = enable_save_eval_images;
+            opt_json["headless"] = headless;
             opt_json["strategy"] = strategy;
             opt_json["mip_filter"] = mip_filter;
             opt_json["use_bilateral_grid"] = use_bilateral_grid;
@@ -259,6 +260,9 @@ namespace lfs::core {
             }
             if (json.contains("enable_save_eval_images")) {
                 params.enable_save_eval_images = json["enable_save_eval_images"];
+            }
+            if (json.contains("headless")) {
+                params.headless = json["headless"];
             }
             if (json.contains("mip_filter")) {
                 params.mip_filter = json["mip_filter"];

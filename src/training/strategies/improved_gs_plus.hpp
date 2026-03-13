@@ -56,6 +56,9 @@ namespace lfs::training {
 
         // Reserve optimizer capacity for future growth (e.g., after checkpoint load)
         void reserve_optimizer_capacity(size_t capacity) override;
+        void set_optimization_params(const lfs::core::param::OptimizationParameters& params) override {
+            _params = std::make_unique<const lfs::core::param::OptimizationParameters>(params);
+        }
 
         void set_training_dataset(std::shared_ptr<CameraDataset> views) override { _views = std::move(views); }
 
