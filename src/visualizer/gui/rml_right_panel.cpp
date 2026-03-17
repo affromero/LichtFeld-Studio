@@ -16,9 +16,9 @@
 #include "internal/resource_paths.hpp"
 #include "theme/theme.hpp"
 
-#include <algorithm>
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Element.h>
+#include <algorithm>
 #include <cassert>
 #include <format>
 
