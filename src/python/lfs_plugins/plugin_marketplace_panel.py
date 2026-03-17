@@ -24,10 +24,7 @@ MAX_OUTPUT_LINES = 100
 SUCCESS_DISMISS_SEC = 3.0
 _CARD_GAP_DP = 12
 _CARD_MIN_WIDTH_DP = 220
-_LAYOUT_HYSTERESIS_DP = 60
-_COLUMN_GROW_HEADROOM_DP = 120
 _GRID_SIDE_MARGIN_DP = 20
-_LAYOUT_WIDTH_QUANTUM_DP = 32
 _SCROLLBAR_GUTTER_DP = 16
 
 _PHASE_MILESTONES: List[Tuple[str, float]] = [
@@ -105,7 +102,6 @@ class PluginMarketplacePanel(Panel):
         self._formats_open = False
         self._last_lang = ""
         self._last_grid_signature: Optional[Tuple] = None
-        self._stable_layout_width: Optional[int] = None
 
     # ── Data model ────────────────────────────────────────────
 
@@ -416,54 +412,24 @@ class PluginMarketplacePanel(Panel):
         return int(max(0.0, float(grid_el.client_width or 0.0)))
 
     def _stabilize_layout_width(self, width: int) -> int:
-        effective_width = max(0, width - _SCROLLBAR_GUTTER_DP)
-        if effective_width <= 0:
-            self._stable_layout_width = effective_width
-            return effective_width
-
-        quantum = _LAYOUT_WIDTH_QUANTUM_DP
-        candidate = max(
-            quantum,
-            ((effective_width + (quantum // 2)) // quantum) * quantum,
-        )
-        if self._stable_layout_width is not None and abs(effective_width - self._stable_layout_width) < quantum:
-            return self._stable_layout_width
-        self._stable_layout_width = candidate
-        return candidate
+        return max(0, width - _SCROLLBAR_GUTTER_DP)
 
     def _compute_grid_layout(self, width: int) -> Tuple[int, int]:
         if width <= 0:
             return 1, _CARD_MIN_WIDTH_DP
 
-        usable_width = max(_CARD_MIN_WIDTH_DP, width - (2 * _GRID_SIDE_MARGIN_DP))
-        max_columns = max(1, int((usable_width + _CARD_GAP_DP) // (_CARD_MIN_WIDTH_DP + _CARD_GAP_DP)))
-        columns = max_columns
-        prev_columns = self._last_grid_signature[1] if self._last_grid_signature else None
-        if prev_columns:
-            if max_columns > prev_columns:
-                grow_threshold = (
-                    self._min_row_width(prev_columns + 1)
-                    + (2 * _GRID_SIDE_MARGIN_DP)
-                    + _COLUMN_GROW_HEADROOM_DP
-                )
-                if width < grow_threshold:
-                    columns = prev_columns
-            elif max_columns < prev_columns:
-                shrink_threshold = (
-                    self._min_row_width(prev_columns)
-                    + (2 * _GRID_SIDE_MARGIN_DP)
-                    - _LAYOUT_HYSTERESIS_DP
-                )
-                if width >= shrink_threshold:
-                    columns = prev_columns
+        usable_width = max(0, width - (2 * _GRID_SIDE_MARGIN_DP))
+        if usable_width <= 0:
+            return 1, _CARD_MIN_WIDTH_DP
 
-        columns = max(1, min(columns, max_columns))
-        min_row_width = self._min_row_width(columns)
-        while columns > 1 and width < (min_row_width + (2 * _GRID_SIDE_MARGIN_DP)):
+        columns = max(
+            1,
+            (usable_width + _CARD_GAP_DP) // (_CARD_MIN_WIDTH_DP + _CARD_GAP_DP),
+        )
+        while columns > 1 and self._min_row_width(columns) > usable_width:
             columns -= 1
-            min_row_width = self._min_row_width(columns)
 
-        row_width = max(min_row_width, width - (2 * _GRID_SIDE_MARGIN_DP))
+        row_width = max(self._min_row_width(columns), usable_width)
         return columns, row_width
 
     @staticmethod
