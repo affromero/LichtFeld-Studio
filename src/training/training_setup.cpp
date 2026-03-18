@@ -163,7 +163,7 @@ namespace lfs::training {
                         lfs::core::Tensor::zeros({1, 3}, lfs::core::Device::CUDA),  // scaling
                         lfs::core::Tensor::zeros({1, 4}, lfs::core::Device::CUDA),  // rotation
                         lfs::core::Tensor::zeros({1, 1}, lfs::core::Device::CUDA),  // opacity
-                        load_result->scene_scale);
+                        1.0f);  // placeholder scale, checkpoint will override
                     scene.addSplat("Model", std::move(dummy_model), dataset_id);
                     scene.setTrainingModelNode("Model");
                 } else {
