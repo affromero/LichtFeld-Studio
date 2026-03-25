@@ -20,7 +20,6 @@
 #include <numeric>
 #include <random>
 #include <stdexcept>
-#include <unordered_set>
 #include <vector>
 
 namespace lfs::training {
@@ -28,6 +27,14 @@ namespace lfs::training {
     namespace {
         constexpr float LFS_EDGE_SCORE_WEIGHT = 0.25f;
         constexpr int LFS_EDGE_MIN_VIEW_SAMPLES = 10;
+        constexpr int LFS_BOUNDS_RECOMPUTE_INTERVAL_REFINES = 5;
+
+        [[nodiscard]] double compute_decay_gamma(const double start, const double end, const size_t steps) {
+            if (steps == 0 || start <= 0.0 || end <= 0.0) {
+                return 1.0;
+            }
+            return std::pow(end / start, 1.0 / static_cast<double>(steps));
+        }
 
         [[nodiscard]] bool has_zero_dimension(const lfs::core::TensorShape& shape) {
             for (size_t i = 0; i < shape.rank(); ++i) {
@@ -36,6 +43,10 @@ namespace lfs::training {
                 }
             }
             return false;
+        }
+
+        [[nodiscard]] bool has_shN_coefficients(const lfs::core::Tensor& shN) {
+            return shN.is_valid() && shN.ndim() >= 2 && shN.shape()[1] > 0;
         }
 
         void reset_optimizer_state_at_indices(
@@ -67,6 +78,75 @@ namespace lfs::training {
             if (state->grad.is_valid()) {
                 state->grad.index_put_(indices, zeros);
             }
+        }
+
+        [[nodiscard]] size_t deleted_mask_capacity(
+            const lfs::core::SplatData& splat_data,
+            const lfs::core::Tensor& free_mask) {
+            return free_mask.is_valid() ? static_cast<size_t>(free_mask.numel())
+                                        : static_cast<size_t>(splat_data.size());
+        }
+
+        void ensure_deleted_mask_size(
+            lfs::core::SplatData& splat_data,
+            const lfs::core::Tensor& free_mask) {
+            const size_t current_size = static_cast<size_t>(splat_data.size());
+            const size_t desired_capacity = deleted_mask_capacity(splat_data, free_mask);
+            auto& deleted = splat_data.deleted();
+            if (!deleted.is_valid() || deleted.ndim() != 1 || deleted.numel() != current_size) {
+                deleted = lfs::core::Tensor::zeros_bool({current_size}, splat_data.means().device());
+            }
+            deleted.reserve(desired_capacity);
+        }
+
+        void sync_deleted_mask_from_free_mask(
+            lfs::core::SplatData& splat_data,
+            const lfs::core::Tensor& free_mask) {
+            const size_t current_size = static_cast<size_t>(splat_data.size());
+            const size_t desired_capacity = deleted_mask_capacity(splat_data, free_mask);
+
+            if (!free_mask.is_valid()) {
+                splat_data.deleted() = lfs::core::Tensor::zeros_bool({current_size}, splat_data.means().device());
+                splat_data.deleted().reserve(desired_capacity);
+                return;
+            }
+
+            splat_data.deleted() = free_mask.slice(0, 0, current_size).clone();
+            splat_data.deleted().reserve(desired_capacity);
+        }
+
+        void set_deleted_mask_rows(
+            lfs::core::SplatData& splat_data,
+            const lfs::core::Tensor& free_mask,
+            const lfs::core::Tensor& indices,
+            const bool deleted) {
+            if (!indices.is_valid() || indices.numel() == 0) {
+                return;
+            }
+
+            ensure_deleted_mask_size(splat_data, free_mask);
+            auto values = deleted
+                              ? lfs::core::Tensor::ones_bool({static_cast<size_t>(indices.numel())}, indices.device())
+                              : lfs::core::Tensor::zeros_bool({static_cast<size_t>(indices.numel())}, indices.device());
+            splat_data.deleted().index_put_(indices, values);
+        }
+
+        void append_live_deleted_rows(
+            lfs::core::SplatData& splat_data,
+            const lfs::core::Tensor& free_mask,
+            const size_t n_rows) {
+            if (n_rows == 0) {
+                return;
+            }
+
+            ensure_deleted_mask_size(splat_data, free_mask);
+            auto& deleted = splat_data.deleted();
+            const size_t desired_capacity = std::max(
+                deleted_mask_capacity(splat_data, free_mask),
+                static_cast<size_t>(deleted.numel()) + n_rows);
+            deleted.reserve(desired_capacity);
+            deleted.append_zeros(n_rows);
+            deleted.reserve(deleted_mask_capacity(splat_data, free_mask));
         }
 
         struct CannyWorkspace {
@@ -162,18 +242,17 @@ namespace lfs::training {
         _optimizer = create_optimizer(*_splat_data, *_params);
         _optimizer->allocate_gradients(_params->max_cap > 0 ? static_cast<size_t>(_params->max_cap) : 0);
         _scheduler = create_scheduler(*_params, *_optimizer);
-
-        auto compute_gamma = [](double start, double end, const size_t steps) {
-            if (steps == 0 || start <= 0.0 || end <= 0.0)
-                return 1.0;
-            return std::pow(end / start, 1.0 / static_cast<double>(steps));
-        };
         _mean_lr_unscaled = _params->means_lr;
         _scale_lr_current = _params->scaling_lr;
-        _mean_lr_gamma = compute_gamma(_params->means_lr, _params->means_lr_end, _params->iterations);
-        _scale_lr_gamma = compute_gamma(_params->scaling_lr, _params->scaling_lr_end, _params->iterations);
+        _mean_lr_gamma = compute_decay_gamma(_params->means_lr, _params->means_lr_end, _params->iterations);
+        _scale_lr_gamma = compute_decay_gamma(_params->scaling_lr, _params->scaling_lr_end, _params->iterations);
 
         ensure_densification_info_shape();
+
+        const size_t capacity = _params->max_cap > 0 ? static_cast<size_t>(_params->max_cap)
+                                                     : static_cast<size_t>(_splat_data->size());
+        _free_mask = Tensor::zeros_bool({capacity}, _splat_data->means().device());
+        sync_deleted_mask_from_free_mask(*_splat_data, _free_mask);
 
         const size_t n = static_cast<size_t>(_splat_data->size());
         _refine_weight_max = Tensor::zeros({n}, _splat_data->means().device());
@@ -278,7 +357,10 @@ namespace lfs::training {
         LOG_TIMER("LFS::refine");
         using namespace lfs::core;
 
-        compute_bounds();
+        ++_refine_windows_since_bounds;
+        if (!_bounds_valid || _refine_windows_since_bounds >= LFS_BOUNDS_RECOMPUTE_INTERVAL_REFINES) {
+            compute_bounds();
+        }
 
         const float max_allowed = _bounds.max_extent * 100.0f;
         const size_t n = static_cast<size_t>(_splat_data->size());
@@ -306,21 +388,37 @@ namespace lfs::training {
                           (scale_max > max_allowed) |
                           (dist_from_center > max_allowed);
 
+        if (_free_mask.is_valid() && n > 0) {
+            auto active_mask = _free_mask.slice(0, 0, n).logical_not();
+            prune_mask = prune_mask.logical_and(active_mask);
+        }
+
         const int pruned_count = static_cast<int>(prune_mask.sum().item());
 
         if (pruned_count > 0) {
-            auto keep_mask = prune_mask.logical_not();
-            compact_splats(keep_mask);
-            LOG_DEBUG("LFS: pruned {} splats at iter {} (remaining: {})",
-                      pruned_count, iter, _splat_data->size());
+            auto prune_indices = prune_mask.nonzero().squeeze(-1);
+            mark_as_free(prune_indices);
+            set_deleted_mask_rows(*_splat_data, _free_mask, prune_indices, true);
+
+            // Zero quaternion so deleted rows exit early in preprocessing.
+            auto zero_rotation = Tensor::zeros({static_cast<size_t>(pruned_count), 4}, _splat_data->rotation_raw().device());
+            _splat_data->rotation_raw().index_put_(prune_indices, zero_rotation);
+
+            reset_optimizer_state_at_indices(*_optimizer, ParamType::Means, prune_indices);
+            reset_optimizer_state_at_indices(*_optimizer, ParamType::Sh0, prune_indices);
+            reset_optimizer_state_at_indices(*_optimizer, ParamType::ShN, prune_indices);
+            reset_optimizer_state_at_indices(*_optimizer, ParamType::Scaling, prune_indices);
+            reset_optimizer_state_at_indices(*_optimizer, ParamType::Rotation, prune_indices);
+            reset_optimizer_state_at_indices(*_optimizer, ParamType::Opacity, prune_indices);
+
+            LOG_DEBUG("LFS: soft-pruned {} splats at iter {} (active: {}, total slots: {})",
+                      pruned_count, iter, active_count(), _splat_data->size());
         }
 
         // Replacement should stay active even after growth stop.
         grow_and_split(iter, pruned_count);
         enforce_max_cap();
         apply_decay(iter);
-
-        Tensor::trim_memory_pool();
 
         const size_t new_n = static_cast<size_t>(_splat_data->size());
         _refine_weight_max = Tensor::zeros({new_n}, _splat_data->means().device());
@@ -333,6 +431,7 @@ namespace lfs::training {
         using namespace lfs::core;
 
         const size_t n = static_cast<size_t>(_splat_data->size());
+        const size_t current_active = active_count();
         const int desired_total = static_cast<int>(
             std::round(static_cast<float>(
                            ((_refine_weight_max > _params->growth_grad_threshold) &&
@@ -341,24 +440,15 @@ namespace lfs::training {
                                .item()) *
                        _params->grow_fraction));
         const int budget = (_params->max_cap > 0)
-                               ? std::max(0, _params->max_cap - static_cast<int>(n))
+                               ? std::max(0, _params->max_cap - static_cast<int>(current_active))
                                : INT_MAX;
-        const int n_replace = std::min(pruned_count, budget);
+        const int requested_replace = std::min(pruned_count, budget);
         int n_grow = 0;
         lfs::core::Tensor above_threshold;
-        if (iter < static_cast<int>(_params->grow_until_iter)) {
-            above_threshold = (_refine_weight_max > _params->growth_grad_threshold) &&
-                              (_vis_count > 0.0f);
-            n_grow = std::max(0, desired_total - pruned_count);
-            n_grow = std::min(n_grow, budget - n_replace);
+        lfs::core::Tensor active_mask;
+        if (_free_mask.is_valid() && n > 0) {
+            active_mask = _free_mask.slice(0, 0, n).logical_not();
         }
-        const int total_K = n_replace + n_grow;
-
-        if (total_K == 0)
-            return;
-
-        assert(total_K > 0);
-        assert(_params->max_cap <= 0 || n + total_K <= static_cast<size_t>(_params->max_cap));
 
         auto seed = static_cast<uint64_t>(
             std::chrono::high_resolution_clock::now().time_since_epoch().count());
@@ -368,19 +458,42 @@ namespace lfs::training {
         Tensor split_indices;
         Tensor replace_inds;
         Tensor growth_inds;
+        Tensor replace_mask;
+        int actual_replace = 0;
 
-        if (n_replace > 0) {
+        if (requested_replace > 0) {
             auto opacities = _splat_data->get_opacity();
             if (opacities.ndim() == 2 && opacities.shape()[1] == 1)
                 opacities = opacities.squeeze(-1);
             auto replace_weights = opacities * (_vis_count > 0.0f);
+            if (active_mask.is_valid()) {
+                replace_weights = replace_weights * active_mask;
+            }
             if (edge_guidance.is_valid()) {
                 replace_weights = replace_weights * edge_guidance;
             }
-            replace_inds = Tensor::empty({static_cast<size_t>(n_replace)}, Device::CUDA, DataType::Int64);
-            lfs_strategy::launch_gumbel_topk(
-                replace_weights.ptr<float>(), n, n_replace, seed,
-                replace_inds.ptr<int64_t>());
+            const int selectable_replace = static_cast<int>(replace_weights.count_nonzero());
+            actual_replace = std::min(requested_replace, selectable_replace);
+            if (actual_replace > 0) {
+                replace_inds = Tensor::empty({static_cast<size_t>(actual_replace)}, Device::CUDA, DataType::Int64);
+                lfs_strategy::launch_gumbel_topk(
+                    replace_weights.ptr<float>(), n, actual_replace, seed,
+                    replace_inds.ptr<int64_t>());
+
+                replace_mask = Tensor::zeros_bool({n}, Device::CUDA);
+                auto true_vals = Tensor::ones_bool({static_cast<size_t>(actual_replace)}, Device::CUDA);
+                replace_mask.index_put_(replace_inds, true_vals);
+            }
+        }
+
+        if (iter < static_cast<int>(_params->grow_until_iter)) {
+            above_threshold = (_refine_weight_max > _params->growth_grad_threshold) &&
+                              (_vis_count > 0.0f);
+            if (active_mask.is_valid()) {
+                above_threshold = above_threshold.logical_and(active_mask);
+            }
+            n_grow = std::max(0, desired_total - actual_replace);
+            n_grow = std::min(n_grow, budget - actual_replace);
         }
 
         if (n_grow > 0) {
@@ -388,61 +501,39 @@ namespace lfs::training {
             if (edge_guidance.is_valid()) {
                 growth_weights = growth_weights * edge_guidance;
             }
-            growth_inds = Tensor::empty({static_cast<size_t>(n_grow)}, Device::CUDA, DataType::Int64);
-            lfs_strategy::launch_gumbel_topk(
-                growth_weights.ptr<float>(), n, n_grow, seed + 1,
-                growth_inds.ptr<int64_t>());
+
+            if (replace_mask.is_valid()) {
+                // Keep replacement and growth disjoint on device instead of
+                // deduplicating sampled indices on the host.
+                growth_weights = growth_weights.masked_fill(replace_mask, 0.0f);
+            }
+
+            const int selectable_growth = static_cast<int>(growth_weights.count_nonzero());
+            if (selectable_growth > 0) {
+                const int growth_budget = std::min(n_grow, selectable_growth);
+                growth_inds = Tensor::empty({static_cast<size_t>(growth_budget)}, Device::CUDA, DataType::Int64);
+                lfs_strategy::launch_gumbel_topk(
+                    growth_weights.ptr<float>(), n, growth_budget, seed + 1,
+                    growth_inds.ptr<int64_t>());
+            }
         }
 
-        if (replace_inds.is_valid() && growth_inds.is_valid()) {
+        if (replace_inds.is_valid() && replace_inds.numel() > 0 &&
+            growth_inds.is_valid() && growth_inds.numel() > 0) {
             split_indices = Tensor::cat({replace_inds, growth_inds}, 0);
-        } else if (replace_inds.is_valid()) {
+        } else if (replace_inds.is_valid() && replace_inds.numel() > 0) {
             split_indices = replace_inds;
-        } else if (growth_inds.is_valid()) {
+        } else if (growth_inds.is_valid() && growth_inds.numel() > 0) {
             split_indices = growth_inds;
         }
 
-        // Match LFS behavior: union replacement+growth indices, removing overlap.
-        std::vector<int64_t> split_idx_unique;
-        {
-            auto split_indices_cpu = split_indices.cpu();
-            const int64_t* ptr = split_indices_cpu.ptr<int64_t>();
-            const size_t count = split_indices_cpu.numel();
-
-            std::unordered_set<int64_t> seen;
-            seen.reserve(count);
-            split_idx_unique.reserve(count);
-            for (size_t i = 0; i < count; ++i) {
-                const int64_t idx = ptr[i];
-                if (seen.insert(idx).second) {
-                    split_idx_unique.push_back(idx);
-                }
-            }
-        }
-
-        if (_params->max_cap > 0) {
-            const size_t max_new = static_cast<size_t>(_params->max_cap) - n;
-            if (split_idx_unique.size() > max_new) {
-                split_idx_unique.resize(max_new);
-                LOG_INFO("LFS: clamped split count to {} for max_cap={}", max_new, _params->max_cap);
-            }
-        }
-
-        if (split_idx_unique.empty())
+        if (!split_indices.is_valid() || split_indices.numel() == 0)
             return;
 
-        std::vector<int> split_idx_unique_i32;
-        split_idx_unique_i32.reserve(split_idx_unique.size());
-        for (const int64_t idx : split_idx_unique) {
-            split_idx_unique_i32.push_back(static_cast<int>(idx));
-        }
-        split_indices = Tensor::from_vector(
-                            split_idx_unique_i32,
-                            TensorShape({split_idx_unique_i32.size()}),
-                            Device::CUDA)
-                            .to(DataType::Int64);
+        assert(_params->max_cap <= 0 ||
+               current_active + split_indices.numel() <= static_cast<size_t>(_params->max_cap));
 
-        const size_t K = split_idx_unique.size();
+        const size_t K = split_indices.numel();
         const size_t sh_rest = (_splat_data->shN().is_valid() && _splat_data->shN().ndim() >= 2)
                                    ? _splat_data->shN().shape()[1]
                                    : 0;
@@ -484,18 +575,47 @@ namespace lfs::training {
         reset_optimizer_state_at_indices(*_optimizer, ParamType::Rotation, split_indices);
         reset_optimizer_state_at_indices(*_optimizer, ParamType::Opacity, split_indices);
 
-        if (_splat_data->opacity_raw().ndim() == 2) {
-            child_raw_opacities = child_raw_opacities.unsqueeze(-1);
+        size_t append_start = 0;
+        if (free_count() > 0) {
+            auto [filled_indices, remaining_after_fill] = fill_free_slots_with_data(
+                child_means,
+                child_rotations,
+                child_log_scales,
+                child_sh0,
+                child_shN,
+                child_raw_opacities,
+                static_cast<int64_t>(K));
+            append_start = K - static_cast<size_t>(remaining_after_fill);
         }
 
-        _optimizer->add_new_params(ParamType::Means, child_means, true);
-        _optimizer->add_new_params(ParamType::Sh0, child_sh0, true);
-        _optimizer->add_new_params(ParamType::ShN, child_shN, false);
-        _optimizer->add_new_params(ParamType::Scaling, child_log_scales, true);
-        _optimizer->add_new_params(ParamType::Rotation, child_rotations, true);
-        _optimizer->add_new_params(ParamType::Opacity, child_raw_opacities, true);
+        const size_t n_append = K - append_start;
+        if (n_append > 0) {
+            append_live_deleted_rows(*_splat_data, _free_mask, n_append);
+            if (_free_mask.is_valid() && _free_mask.numel() < _splat_data->size() + n_append) {
+                _free_mask.reserve(_splat_data->size() + n_append);
+                _free_mask.append_zeros(n_append);
+            }
 
-        LOG_DEBUG("LFS: split {} splats at iter {} (total: {})", K, iter, _splat_data->size());
+            auto append_means = child_means.slice(0, append_start, K);
+            auto append_sh0 = child_sh0.slice(0, append_start, K);
+            auto append_shN = child_shN.slice(0, append_start, K);
+            auto append_scaling = child_log_scales.slice(0, append_start, K);
+            auto append_rotation = child_rotations.slice(0, append_start, K);
+            auto append_opacity = child_raw_opacities.slice(0, append_start, K);
+            if (_splat_data->opacity_raw().ndim() == 2) {
+                append_opacity = append_opacity.unsqueeze(-1);
+            }
+
+            _optimizer->add_new_params(ParamType::Means, append_means, true);
+            _optimizer->add_new_params(ParamType::Sh0, append_sh0, true);
+            _optimizer->add_new_params(ParamType::ShN, append_shN, false);
+            _optimizer->add_new_params(ParamType::Scaling, append_scaling, true);
+            _optimizer->add_new_params(ParamType::Rotation, append_rotation, true);
+            _optimizer->add_new_params(ParamType::Opacity, append_opacity, true);
+        }
+
+        LOG_DEBUG("LFS: split {} splats at iter {} (reused: {}, appended: {}, active: {}, total slots: {})",
+                  K, iter, append_start, n_append, active_count(), _splat_data->size());
     }
 
     void LFS::compact_splats(const lfs::core::Tensor& keep_mask) {
@@ -546,6 +666,21 @@ namespace lfs::training {
         const auto& info = _splat_data->_densification_info;
         if (info.is_valid() && info.ndim() == 2 && info.shape()[1] == old_size) {
             _splat_data->_densification_info = info.index_select(1, valid_indices).contiguous();
+        }
+        if (_splat_data->has_deleted_mask() && _splat_data->deleted().numel() == old_size) {
+            auto compacted_deleted = _splat_data->deleted().index_select(0, valid_indices).contiguous();
+            if (cap > 0)
+                compacted_deleted.reserve(cap);
+            _splat_data->deleted() = std::move(compacted_deleted);
+        }
+        if (_free_mask.is_valid() && old_size > 0) {
+            auto compacted_free = _free_mask.slice(0, 0, old_size).index_select(0, valid_indices).contiguous();
+            if (cap > new_size) {
+                auto tail = Tensor::zeros_bool({cap - new_size}, compacted_free.device());
+                _free_mask = Tensor::cat({compacted_free, tail}, 0);
+            } else {
+                _free_mask = std::move(compacted_free);
+            }
         }
         if (_refine_weight_max.is_valid() && _refine_weight_max.numel() > new_size)
             _refine_weight_max = _refine_weight_max.index_select(0, valid_indices).contiguous();
@@ -624,18 +759,135 @@ namespace lfs::training {
         assert(_splat_data->size() <= cap);
     }
 
-    void LFS::compute_bounds() {
-        const size_t n = static_cast<size_t>(_splat_data->size());
-        if (n == 0)
+    size_t LFS::active_count() const {
+        if (!_free_mask.is_valid()) {
+            return static_cast<size_t>(_splat_data->size());
+        }
+
+        const size_t current_size = static_cast<size_t>(_splat_data->size());
+        if (current_size == 0)
+            return 0;
+
+        auto active_region = _free_mask.slice(0, 0, current_size);
+        const size_t free_count_val = static_cast<size_t>(active_region.sum_scalar());
+        return current_size - free_count_val;
+    }
+
+    size_t LFS::free_count() const {
+        if (!_free_mask.is_valid()) {
+            return 0;
+        }
+
+        const size_t current_size = static_cast<size_t>(_splat_data->size());
+        if (current_size == 0)
+            return 0;
+
+        auto active_region = _free_mask.slice(0, 0, current_size);
+        return static_cast<size_t>(active_region.sum_scalar());
+    }
+
+    lfs::core::Tensor LFS::get_active_indices() const {
+        const size_t current_size = static_cast<size_t>(_splat_data->size());
+        if (current_size == 0) {
+            return {};
+        }
+
+        if (!_free_mask.is_valid() || free_count() == 0) {
+            auto all_active = lfs::core::Tensor::ones_bool({current_size}, _splat_data->means().device());
+            return all_active.nonzero().squeeze(-1);
+        }
+
+        auto active_region = _free_mask.slice(0, 0, current_size);
+        auto is_active = active_region.logical_not();
+        return is_active.nonzero().squeeze(-1);
+    }
+
+    void LFS::mark_as_free(const lfs::core::Tensor& indices) {
+        if (!_free_mask.is_valid() || indices.numel() == 0) {
             return;
+        }
+
+        auto true_vals = lfs::core::Tensor::ones_bool({static_cast<size_t>(indices.numel())}, indices.device());
+        _free_mask.index_put_(indices, true_vals);
+    }
+
+    std::pair<lfs::core::Tensor, int64_t> LFS::fill_free_slots_with_data(
+        const lfs::core::Tensor& positions,
+        const lfs::core::Tensor& rotations,
+        const lfs::core::Tensor& scales,
+        const lfs::core::Tensor& sh0,
+        const lfs::core::Tensor& shN,
+        const lfs::core::Tensor& opacities,
+        int64_t count) {
+
+        using namespace lfs::core;
+
+        if (!_free_mask.is_valid() || count == 0) {
+            return {Tensor(), count};
+        }
+
+        const size_t current_size = static_cast<size_t>(_splat_data->size());
+        auto active_region = _free_mask.slice(0, 0, current_size);
+        auto free_indices = active_region.nonzero().squeeze(-1);
+        const int64_t num_free = free_indices.numel();
+
+        if (num_free == 0) {
+            return {Tensor(), count};
+        }
+
+        const int64_t slots_to_fill = std::min(count, num_free);
+        auto target_indices = free_indices.slice(0, 0, slots_to_fill);
+
+        _splat_data->means().index_put_(target_indices, positions.slice(0, 0, slots_to_fill));
+        _splat_data->rotation_raw().index_put_(target_indices, rotations.slice(0, 0, slots_to_fill));
+        _splat_data->scaling_raw().index_put_(target_indices, scales.slice(0, 0, slots_to_fill));
+        _splat_data->sh0().index_put_(target_indices, sh0.slice(0, 0, slots_to_fill));
+
+        auto opacity_slice = opacities.slice(0, 0, slots_to_fill);
+        if (_splat_data->opacity_raw().ndim() == 2) {
+            opacity_slice = opacity_slice.unsqueeze(-1);
+        }
+        _splat_data->opacity_raw().index_put_(target_indices, opacity_slice);
+
+        if (shN.is_valid() && has_shN_coefficients(_splat_data->shN())) {
+            _splat_data->shN().index_put_(target_indices, shN.slice(0, 0, slots_to_fill));
+        }
+
+        reset_optimizer_state_at_indices(*_optimizer, ParamType::Means, target_indices);
+        reset_optimizer_state_at_indices(*_optimizer, ParamType::Sh0, target_indices);
+        reset_optimizer_state_at_indices(*_optimizer, ParamType::ShN, target_indices);
+        reset_optimizer_state_at_indices(*_optimizer, ParamType::Scaling, target_indices);
+        reset_optimizer_state_at_indices(*_optimizer, ParamType::Rotation, target_indices);
+        reset_optimizer_state_at_indices(*_optimizer, ParamType::Opacity, target_indices);
+
+        auto false_vals = Tensor::zeros_bool({static_cast<size_t>(slots_to_fill)}, target_indices.device());
+        _free_mask.index_put_(target_indices, false_vals);
+        set_deleted_mask_rows(*_splat_data, _free_mask, target_indices, false);
+
+        return {target_indices, count - slots_to_fill};
+    }
+
+    void LFS::compute_bounds() {
+        const size_t n = active_count();
+        if (n == 0) {
+            _bounds_valid = false;
+            return;
+        }
+
+        lfs::core::Tensor active_means = _splat_data->means();
+        if (_free_mask.is_valid() && free_count() > 0) {
+            auto active_indices = get_active_indices();
+            active_means = _splat_data->means().index_select(0, active_indices).contiguous();
+        }
 
         lfs_strategy::launch_percentile_bounds(
-            _splat_data->means().ptr<float>(),
+            active_means.ptr<float>(),
             n,
             _params->bounds_percentile,
             &_bounds);
 
         _bounds_valid = true;
+        _refine_windows_since_bounds = 0;
 
         _optimizer->set_param_lr(ParamType::Means, _mean_lr_unscaled * _bounds.median_size);
     }
@@ -679,7 +931,7 @@ namespace lfs::training {
 
     lfs::core::Tensor LFS::compute_edge_scores(const int iter) {
         const int64_t N = static_cast<int64_t>(_splat_data->size());
-        if (N <= 0 || !_views || !_image_loader || _views->size() == 0) {
+        if (N <= 0 || active_count() == 0 || !_views || !_image_loader || _views->size() == 0) {
             return {};
         }
 
@@ -760,7 +1012,7 @@ namespace lfs::training {
 
     namespace {
         constexpr uint32_t LFS_MAGIC = 0x4C464252; // "LFBR"
-        constexpr uint32_t LFS_VERSION = 1;
+        constexpr uint32_t LFS_VERSION = 3;
     } // namespace
 
     void LFS::serialize(std::ostream& os) const {
@@ -784,6 +1036,15 @@ namespace lfs::training {
             uint8_t has_scheduler = 0;
             os.write(reinterpret_cast<const char*>(&has_scheduler), sizeof(has_scheduler));
         }
+
+        const uint8_t has_free_mask = _free_mask.is_valid() ? 1 : 0;
+        os.write(reinterpret_cast<const char*>(&has_free_mask), sizeof(has_free_mask));
+        if (has_free_mask) {
+            os << _free_mask;
+        }
+
+        os.write(reinterpret_cast<const char*>(&_mean_lr_unscaled), sizeof(_mean_lr_unscaled));
+        os.write(reinterpret_cast<const char*>(&_scale_lr_current), sizeof(_scale_lr_current));
     }
 
     void LFS::deserialize(std::istream& is) {
@@ -793,7 +1054,7 @@ namespace lfs::training {
 
         if (magic != LFS_MAGIC)
             throw std::runtime_error("Invalid LFS checkpoint: wrong magic");
-        if (version != LFS_VERSION)
+        if (version == 0 || version > LFS_VERSION)
             throw std::runtime_error("Unsupported LFS checkpoint version: " + std::to_string(version));
 
         uint8_t has_optimizer;
@@ -805,6 +1066,63 @@ namespace lfs::training {
         is.read(reinterpret_cast<char*>(&has_scheduler), sizeof(has_scheduler));
         if (has_scheduler && _scheduler)
             _scheduler->deserialize(is);
+
+        const double optimizer_mean_lr = _optimizer ? _optimizer->get_param_lr(ParamType::Means) : 0.0;
+        const double optimizer_scaling_lr = _optimizer ? _optimizer->get_param_lr(ParamType::Scaling) : 0.0;
+
+        if (version >= 2) {
+            uint8_t has_free_mask = 0;
+            is.read(reinterpret_cast<char*>(&has_free_mask), sizeof(has_free_mask));
+            if (has_free_mask) {
+                is >> _free_mask;
+                if (_free_mask.device() != lfs::core::Device::CUDA) {
+                    _free_mask = _free_mask.cuda();
+                }
+            }
+        }
+        if (version >= 3) {
+            is.read(reinterpret_cast<char*>(&_mean_lr_unscaled), sizeof(_mean_lr_unscaled));
+            is.read(reinterpret_cast<char*>(&_scale_lr_current), sizeof(_scale_lr_current));
+        } else {
+            _mean_lr_unscaled = _params ? _params->means_lr : _mean_lr_unscaled;
+            _scale_lr_current = optimizer_scaling_lr > 0.0
+                                    ? optimizer_scaling_lr
+                                    : (_params ? _params->scaling_lr : _scale_lr_current);
+        }
+
+        if (!_free_mask.is_valid()) {
+            const size_t capacity = (_params && _params->max_cap > 0)
+                                        ? static_cast<size_t>(_params->max_cap)
+                                        : static_cast<size_t>(_splat_data->size());
+            _free_mask = lfs::core::Tensor::zeros_bool({capacity}, _splat_data->means().device());
+        }
+        sync_deleted_mask_from_free_mask(*_splat_data, _free_mask);
+
+        const size_t n = static_cast<size_t>(_splat_data->size());
+        _refine_weight_max = lfs::core::Tensor::zeros({n}, _splat_data->means().device());
+        _vis_count = lfs::core::Tensor::zeros({n}, _splat_data->means().device());
+        ensure_densification_info_shape();
+        _precomputed_edge_scores = lfs::core::Tensor();
+        _edge_precompute_valid = false;
+
+        if (_splat_data->size() == 0 || active_count() == 0) {
+            _bounds_valid = false;
+        } else {
+            compute_bounds();
+        }
+
+        if (version < 3 && _bounds_valid && optimizer_mean_lr > 0.0 && _bounds.median_size > 0.0f) {
+            _mean_lr_unscaled = optimizer_mean_lr / static_cast<double>(_bounds.median_size);
+        }
+
+        refresh_decay_schedule_from_current_state();
+
+        if (_optimizer) {
+            _optimizer->set_param_lr(ParamType::Scaling, _scale_lr_current);
+            if (_bounds_valid) {
+                _optimizer->set_param_lr(ParamType::Means, _mean_lr_unscaled * _bounds.median_size);
+            }
+        }
     }
 
     void LFS::reserve_optimizer_capacity(size_t capacity) {
@@ -812,6 +1130,40 @@ namespace lfs::training {
             _optimizer->reserve_capacity(capacity);
             LOG_INFO("LFS: reserved optimizer capacity for {} Gaussians", capacity);
         }
+    }
+
+    void LFS::set_optimization_params(const lfs::core::param::OptimizationParameters& params) {
+        _params = std::make_unique<const lfs::core::param::OptimizationParameters>(params);
+
+        if (_mean_lr_unscaled <= 0.0) {
+            _mean_lr_unscaled = params.means_lr;
+        }
+        if (_scale_lr_current <= 0.0) {
+            _scale_lr_current = params.scaling_lr;
+        }
+
+        refresh_decay_schedule_from_current_state();
+
+        if (_optimizer) {
+            _optimizer->set_param_lr(ParamType::Scaling, _scale_lr_current);
+            if (_bounds_valid) {
+                _optimizer->set_param_lr(ParamType::Means, _mean_lr_unscaled * _bounds.median_size);
+            }
+        }
+    }
+
+    void LFS::refresh_decay_schedule_from_current_state() {
+        const int64_t completed_steps = _optimizer ? std::max<int64_t>(0, _optimizer->get_step_count(ParamType::Means))
+                                                   : 0;
+        const size_t remaining_steps =
+            (_params && _params->iterations > static_cast<size_t>(completed_steps))
+                ? (_params->iterations - static_cast<size_t>(completed_steps))
+                : 0;
+
+        const double mean_lr_end = _params ? _params->means_lr_end : _mean_lr_unscaled;
+        const double scaling_lr_end = _params ? _params->scaling_lr_end : _scale_lr_current;
+        _mean_lr_gamma = compute_decay_gamma(_mean_lr_unscaled, mean_lr_end, remaining_steps);
+        _scale_lr_gamma = compute_decay_gamma(_scale_lr_current, scaling_lr_end, remaining_steps);
     }
 
 } // namespace lfs::training

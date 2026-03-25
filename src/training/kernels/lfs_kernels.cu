@@ -3,13 +3,19 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "lfs_kernels.hpp"
+#include "core/tensor/internal/tensor_generic_ops.cuh"
 #include <algorithm>
 #include <cassert>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
+#include <thrust/copy.h>
+#include <thrust/count.h>
+#include <thrust/device_ptr.h>
 #include <thrust/execution_policy.h>
+#include <thrust/iterator/counting_iterator.h>
 #include <thrust/sequence.h>
+#include <thrust/sort.h>
 
 namespace lfs::training::lfs_strategy {
 
@@ -22,6 +28,13 @@ namespace lfs::training::lfs_strategy {
         __device__ __forceinline__ float d_logit(float p) {
             return logf(p / (1.0f - p));
         }
+
+        struct positive_weight {
+            __host__ __device__
+            bool operator()(const float w) const {
+                return w > 0.0f;
+            }
+        };
 
     } // namespace
 
@@ -245,13 +258,27 @@ namespace lfs::training::lfs_strategy {
         keys[idx] = -logf(-logf(u)) + logf(w);
     }
 
-    __global__ void int_to_int64_kernel(
-        const int* __restrict__ src,
-        int64_t* __restrict__ dst,
-        size_t n) {
-        const size_t i = threadIdx.x + blockIdx.x * static_cast<size_t>(blockDim.x);
-        if (i < n)
-            dst[i] = static_cast<int64_t>(src[i]);
+    __global__ void gumbel_key_for_indices_kernel(
+        const float* __restrict__ weights,
+        const int64_t* __restrict__ indices,
+        float* __restrict__ keys,
+        size_t N,
+        uint64_t seed) {
+
+        const size_t idx = threadIdx.x + blockIdx.x * static_cast<size_t>(blockDim.x);
+        if (idx >= N)
+            return;
+
+        const int64_t src_idx = indices[idx];
+        const float w = weights[src_idx];
+
+        curandState rng;
+        curand_init(seed, idx, 0, &rng);
+        float u = curand_uniform(&rng);
+        u = fmaxf(u, 1e-10f);
+        u = fminf(u, 1.0f - 1e-7f);
+
+        keys[idx] = -logf(-logf(u)) + logf(w);
     }
 
     void launch_gumbel_topk(
@@ -268,39 +295,74 @@ namespace lfs::training::lfs_strategy {
 
         cudaStream_t s = stream ? static_cast<cudaStream_t>(stream) : nullptr;
 
+        if (K == N) {
+            auto out_ptr = thrust::device_pointer_cast(output_indices);
+            lfs::core::tensor_ops::run_with_thrust_policy(s, [&](auto policy) {
+                thrust::sequence(policy, out_ptr, out_ptr + N);
+            });
+            return;
+        }
+
+        auto weights_ptr = thrust::device_pointer_cast(weights);
+        size_t active_count = 0;
+        lfs::core::tensor_ops::run_with_thrust_policy(s, [&](auto policy) {
+            active_count = static_cast<size_t>(
+                thrust::count_if(policy, weights_ptr, weights_ptr + N, positive_weight{}));
+        });
+
+        const bool compact_active = active_count >= K && active_count < N;
+        const size_t sort_count = compact_active ? active_count : N;
+
         float* d_keys = nullptr;
-        cudaMallocAsync(&d_keys, N * sizeof(float), s);
+        int64_t* d_indices = nullptr;
+        float* d_keys_sorted = nullptr;
+        int64_t* d_indices_sorted = nullptr;
+        cudaMallocAsync(&d_keys, sort_count * sizeof(float), s);
+        cudaMallocAsync(&d_indices, sort_count * sizeof(int64_t), s);
+        cudaMallocAsync(&d_keys_sorted, sort_count * sizeof(float), s);
+        cudaMallocAsync(&d_indices_sorted, sort_count * sizeof(int64_t), s);
 
         constexpr int threads = 256;
-        const int blocks = static_cast<int>((N + threads - 1) / threads);
-        gumbel_key_kernel<<<blocks, threads, 0, s>>>(weights, d_keys, N, seed);
+        const int blocks = static_cast<int>((sort_count + threads - 1) / threads);
 
-        int* d_indices = nullptr;
-        float* d_keys_sorted = nullptr;
-        int* d_indices_sorted = nullptr;
-        cudaMallocAsync(&d_indices, N * sizeof(int), s);
-        cudaMallocAsync(&d_keys_sorted, N * sizeof(float), s);
-        cudaMallocAsync(&d_indices_sorted, N * sizeof(int), s);
+        if (compact_active) {
+            auto indices_ptr = thrust::device_pointer_cast(d_indices);
+            auto counting_begin = thrust::make_counting_iterator<int64_t>(0);
+            lfs::core::tensor_ops::run_with_thrust_policy(s, [&](auto policy) {
+                thrust::copy_if(
+                    policy,
+                    counting_begin,
+                    counting_begin + static_cast<std::ptrdiff_t>(N),
+                    weights_ptr,
+                    indices_ptr,
+                    positive_weight{});
+            });
+            gumbel_key_for_indices_kernel<<<blocks, threads, 0, s>>>(
+                weights, d_indices, d_keys, sort_count, seed);
+        } else {
+            gumbel_key_kernel<<<blocks, threads, 0, s>>>(weights, d_keys, sort_count, seed);
+            auto indices_ptr = thrust::device_pointer_cast(d_indices);
+            lfs::core::tensor_ops::run_with_thrust_policy(s, [&](auto policy) {
+                thrust::sequence(policy, indices_ptr, indices_ptr + static_cast<std::ptrdiff_t>(sort_count));
+            });
+        }
 
-        thrust::sequence(thrust::cuda::par.on(s), d_indices, d_indices + N);
-
-        const int n_int = static_cast<int>(N);
+        const int sort_count_int = static_cast<int>(sort_count);
         size_t temp_bytes = 0;
         cub::DeviceRadixSort::SortPairsDescending(
             nullptr, temp_bytes,
             d_keys, d_keys_sorted,
             d_indices, d_indices_sorted,
-            n_int, 0, 32, s);
+            sort_count_int, 0, 32, s);
         char* d_temp = nullptr;
         cudaMallocAsync(&d_temp, temp_bytes, s);
         cub::DeviceRadixSort::SortPairsDescending(
             d_temp, temp_bytes,
             d_keys, d_keys_sorted,
             d_indices, d_indices_sorted,
-            n_int, 0, 32, s);
+            sort_count_int, 0, 32, s);
 
-        const int conv_blocks = static_cast<int>((K + threads - 1) / threads);
-        int_to_int64_kernel<<<conv_blocks, threads, 0, s>>>(d_indices_sorted, output_indices, K);
+        cudaMemcpyAsync(output_indices, d_indices_sorted, K * sizeof(int64_t), cudaMemcpyDeviceToDevice, s);
 
         cudaFreeAsync(d_temp, s);
         cudaFreeAsync(d_keys, s);

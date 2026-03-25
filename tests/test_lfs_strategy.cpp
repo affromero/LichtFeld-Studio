@@ -4,6 +4,13 @@
 class LFSStrategyTest_EdgeGuidanceFactorPrefersHigherPrecomputedEdgeScores_Test;
 class LFSStrategyTest_GrowAndSplitResetsOptimizerStateForParents_Test;
 class LFSStrategyTest_GrowAndSplitUsesIgsPlusSplitRule_Test;
+class LFSStrategyTest_GrowAndSplitWithoutMaxCapExtendsBookkeepingMasks_Test;
+class LFSStrategyTest_GrowAndSplitReplacementSkipsZeroWeightCandidates_Test;
+class LFSStrategyTest_GrowAndSplitReusesFreeSlotsBeforeAppending_Test;
+class LFSStrategyTest_SerializeRoundTripPreservesFreeMask_Test;
+class LFSStrategyTest_SerializeRoundTripPreservesLrScheduleState_Test;
+class LFSStrategyTest_DeserializeResizesTransientBuffersToLoadedModel_Test;
+class LFSStrategyTest_SetOptimizationParamsRecomputesDecayFromCurrentState_Test;
 
 #include "core/parameters.hpp"
 #include "core/splat_data.hpp"
@@ -11,6 +18,7 @@ class LFSStrategyTest_GrowAndSplitUsesIgsPlusSplitRule_Test;
 
 #include <cmath>
 #include <gtest/gtest.h>
+#include <sstream>
 #include <vector>
 
 using namespace lfs::core;
@@ -18,9 +26,8 @@ using namespace lfs::training;
 
 namespace {
 
-    SplatData create_lfs_test_splat_data() {
-        constexpr int n_gaussians = 10;
-
+    SplatData create_lfs_test_splat_data(const int n_gaussians = 10) {
+        const size_t n = static_cast<size_t>(n_gaussians);
         std::vector<float> means_data(n_gaussians * 3, 0.0f);
         for (int i = 0; i < n_gaussians; ++i) {
             means_data[i * 3 + 0] = static_cast<float>(i);
@@ -36,12 +43,12 @@ namespace {
             rotation_data[i * 4 + 0] = 1.0f; // identity quaternion
         }
 
-        auto means = Tensor::from_vector(means_data, TensorShape({n_gaussians, 3}), Device::CUDA);
-        auto sh0 = Tensor::from_vector(sh0_data, TensorShape({n_gaussians, 1, 3}), Device::CUDA);
-        auto shN = Tensor::from_vector(shN_data, TensorShape({n_gaussians, 15, 3}), Device::CUDA);
-        auto scaling = Tensor::from_vector(scaling_data, TensorShape({n_gaussians, 3}), Device::CUDA);
-        auto rotation = Tensor::from_vector(rotation_data, TensorShape({n_gaussians, 4}), Device::CUDA);
-        auto opacity = Tensor::from_vector(opacity_data, TensorShape({n_gaussians, 1}), Device::CUDA);
+        auto means = Tensor::from_vector(means_data, TensorShape({n, 3}), Device::CUDA);
+        auto sh0 = Tensor::from_vector(sh0_data, TensorShape({n, 1, 3}), Device::CUDA);
+        auto shN = Tensor::from_vector(shN_data, TensorShape({n, 15, 3}), Device::CUDA);
+        auto scaling = Tensor::from_vector(scaling_data, TensorShape({n, 3}), Device::CUDA);
+        auto rotation = Tensor::from_vector(rotation_data, TensorShape({n, 4}), Device::CUDA);
+        auto opacity = Tensor::from_vector(opacity_data, TensorShape({n, 1}), Device::CUDA);
 
         return SplatData(3, means, sh0, shN, scaling, rotation, opacity, 1.0f);
     }
@@ -235,4 +242,227 @@ TEST(LFSStrategyTest, StepScalingAlsoScalesGrowUntilIter) {
     EXPECT_EQ(params.grow_until_iter, 7500u);
     EXPECT_EQ(params.refine_every, 100u);
     EXPECT_EQ(params.stop_refine, 14250u);
+}
+
+TEST(LFSStrategyTest, GrowAndSplitWithoutMaxCapExtendsBookkeepingMasks) {
+    auto splat_data = create_lfs_test_splat_data();
+    LFS strategy(splat_data);
+
+    auto opt_params = param::OptimizationParameters::lfs_defaults();
+    opt_params.iterations = 10'000;
+    opt_params.sh_degree_interval = 10'000;
+    opt_params.max_cap = 0;
+    opt_params.growth_grad_threshold = 0.5f;
+    opt_params.grow_fraction = 1.0f;
+    opt_params.grow_until_iter = 10'000;
+    strategy.initialize(opt_params);
+
+    strategy._refine_weight_max = Tensor::zeros({static_cast<size_t>(splat_data.size())}, Device::CUDA);
+    strategy._vis_count = Tensor::zeros({static_cast<size_t>(splat_data.size())}, Device::CUDA);
+
+    const auto split_idx = Tensor::from_vector(std::vector<int>{0}, TensorShape({1}), Device::CUDA).to(DataType::Int64);
+    strategy._refine_weight_max.index_put_(split_idx, Tensor::full({1}, 1.0f, Device::CUDA));
+    strategy._vis_count.index_put_(split_idx, Tensor::full({1}, 1.0f, Device::CUDA));
+
+    const size_t initial_size = splat_data.size();
+    ASSERT_NO_THROW(strategy.grow_and_split(1, 0));
+
+    EXPECT_EQ(splat_data.size(), initial_size + 1);
+    ASSERT_TRUE(splat_data.has_deleted_mask());
+    EXPECT_EQ(splat_data.deleted().shape()[0], splat_data.size());
+    EXPECT_EQ(strategy.free_count(), 0u);
+}
+
+TEST(LFSStrategyTest, GrowAndSplitReplacementSkipsZeroWeightCandidates) {
+    auto splat_data = create_lfs_test_splat_data();
+    LFS strategy(splat_data);
+
+    auto opt_params = param::OptimizationParameters::lfs_defaults();
+    opt_params.iterations = 10'000;
+    opt_params.sh_degree_interval = 10'000;
+    opt_params.max_cap = 32;
+    opt_params.growth_grad_threshold = 0.5f;
+    opt_params.grow_fraction = 0.0f;
+    opt_params.grow_until_iter = 0;
+    strategy.initialize(opt_params);
+
+    const auto free_indices = Tensor::from_vector(std::vector<int>{8, 9}, TensorShape({2}), Device::CUDA).to(DataType::Int64);
+    strategy.mark_as_free(free_indices);
+    auto true_vals = Tensor::ones_bool({2}, Device::CUDA);
+    strategy._splat_data->deleted().index_put_(free_indices, true_vals);
+
+    strategy._refine_weight_max = Tensor::zeros({static_cast<size_t>(splat_data.size())}, Device::CUDA);
+    strategy._vis_count = Tensor::zeros({static_cast<size_t>(splat_data.size())}, Device::CUDA);
+
+    const auto visible_parent = Tensor::from_vector(std::vector<int>{0}, TensorShape({1}), Device::CUDA).to(DataType::Int64);
+    strategy._vis_count.index_put_(visible_parent, Tensor::full({1}, 1.0f, Device::CUDA));
+
+    const size_t initial_size = splat_data.size();
+    strategy.grow_and_split(10'001, 2);
+
+    EXPECT_EQ(splat_data.size(), initial_size);
+    EXPECT_EQ(strategy.free_count(), 1u);
+    EXPECT_EQ(strategy.active_count(), initial_size - 1);
+}
+
+TEST(LFSStrategyTest, GrowAndSplitReusesFreeSlotsBeforeAppending) {
+    auto splat_data = create_lfs_test_splat_data();
+    LFS strategy(splat_data);
+
+    auto opt_params = param::OptimizationParameters::lfs_defaults();
+    opt_params.iterations = 10'000;
+    opt_params.sh_degree_interval = 10'000;
+    opt_params.max_cap = 32;
+    opt_params.growth_grad_threshold = 0.5f;
+    opt_params.grow_fraction = 1.0f;
+    opt_params.grow_until_iter = 10'000;
+    strategy.initialize(opt_params);
+
+    const auto free_indices = Tensor::from_vector(std::vector<int>{8, 9}, TensorShape({2}), Device::CUDA).to(DataType::Int64);
+    strategy.mark_as_free(free_indices);
+    auto true_vals = Tensor::ones_bool({2}, Device::CUDA);
+    strategy._splat_data->deleted().index_put_(free_indices, true_vals);
+
+    strategy._refine_weight_max = Tensor::zeros({static_cast<size_t>(splat_data.size())}, Device::CUDA);
+    strategy._vis_count = Tensor::zeros({static_cast<size_t>(splat_data.size())}, Device::CUDA);
+
+    const auto split_idx = Tensor::from_vector(std::vector<int>{0}, TensorShape({1}), Device::CUDA).to(DataType::Int64);
+    strategy._refine_weight_max.index_put_(split_idx, Tensor::full({1}, 1.0f, Device::CUDA));
+    strategy._vis_count.index_put_(split_idx, Tensor::full({1}, 1.0f, Device::CUDA));
+
+    const size_t initial_size = splat_data.size();
+    strategy.grow_and_split(1, 0);
+
+    EXPECT_EQ(splat_data.size(), initial_size);
+    EXPECT_EQ(strategy.active_count(), initial_size - 1);
+    EXPECT_EQ(strategy.free_count(), 1u);
+}
+
+TEST(LFSStrategyTest, SerializeRoundTripPreservesFreeMask) {
+    auto splat_data = create_lfs_test_splat_data();
+    LFS strategy(splat_data);
+
+    auto opt_params = param::OptimizationParameters::lfs_defaults();
+    opt_params.iterations = 10'000;
+    opt_params.sh_degree_interval = 10'000;
+    opt_params.max_cap = 32;
+    strategy.initialize(opt_params);
+
+    const auto free_indices = Tensor::from_vector(std::vector<int>{1, 3}, TensorShape({2}), Device::CUDA).to(DataType::Int64);
+    strategy.mark_as_free(free_indices);
+    auto true_vals = Tensor::ones_bool({2}, Device::CUDA);
+    strategy._splat_data->deleted().index_put_(free_indices, true_vals);
+
+    std::stringstream ss;
+    strategy.serialize(ss);
+
+    auto splat_data_copy = create_lfs_test_splat_data();
+    LFS restored(splat_data_copy);
+    restored.initialize(opt_params);
+    restored.deserialize(ss);
+
+    const auto free_mask_cpu = restored._free_mask.cpu();
+    const bool* free_mask_ptr = free_mask_cpu.ptr<bool>();
+
+    EXPECT_TRUE(free_mask_ptr[1]);
+    EXPECT_TRUE(free_mask_ptr[3]);
+    EXPECT_FALSE(free_mask_ptr[0]);
+    EXPECT_EQ(restored.free_count(), 2u);
+}
+
+TEST(LFSStrategyTest, SerializeRoundTripPreservesLrScheduleState) {
+    auto splat_data = create_lfs_test_splat_data();
+    LFS strategy(splat_data);
+
+    auto opt_params = param::OptimizationParameters::lfs_defaults();
+    opt_params.iterations = 10'000;
+    opt_params.sh_degree_interval = 10'000;
+    opt_params.max_cap = 32;
+    strategy.initialize(opt_params);
+
+    strategy._mean_lr_unscaled = 1.5e-6;
+    strategy._scale_lr_current = 2.5e-4;
+    strategy.refresh_decay_schedule_from_current_state();
+
+    std::stringstream ss;
+    strategy.serialize(ss);
+
+    auto splat_data_copy = create_lfs_test_splat_data();
+    LFS restored(splat_data_copy);
+    restored.initialize(opt_params);
+    restored.deserialize(ss);
+
+    EXPECT_DOUBLE_EQ(restored._mean_lr_unscaled, strategy._mean_lr_unscaled);
+    EXPECT_DOUBLE_EQ(restored._scale_lr_current, strategy._scale_lr_current);
+    EXPECT_NEAR(restored.get_optimizer().get_param_lr(ParamType::Scaling), strategy._scale_lr_current, 1e-12);
+    EXPECT_NEAR(restored.get_optimizer().get_param_lr(ParamType::Means),
+                strategy._mean_lr_unscaled * restored._bounds.median_size,
+                1e-12);
+}
+
+TEST(LFSStrategyTest, DeserializeResizesTransientBuffersToLoadedModel) {
+    auto splat_data = create_lfs_test_splat_data(12);
+    LFS strategy(splat_data);
+
+    auto opt_params = param::OptimizationParameters::lfs_defaults();
+    opt_params.iterations = 10'000;
+    opt_params.sh_degree_interval = 10'000;
+    opt_params.max_cap = 32;
+    strategy.initialize(opt_params);
+
+    std::stringstream ss;
+    splat_data.serialize(ss);
+    strategy.serialize(ss);
+    ss.seekg(0);
+
+    auto smaller_splat_data = create_lfs_test_splat_data(5);
+    LFS restored(smaller_splat_data);
+    restored.initialize(opt_params);
+    smaller_splat_data.deserialize(ss);
+    restored.deserialize(ss);
+
+    EXPECT_EQ(restored._refine_weight_max.numel(), 12u);
+    EXPECT_EQ(restored._vis_count.numel(), 12u);
+    ASSERT_TRUE(restored.get_model()._densification_info.is_valid());
+    EXPECT_EQ(restored.get_model()._densification_info.shape()[1], 12u);
+    EXPECT_FALSE(restored._edge_precompute_valid);
+}
+
+TEST(LFSStrategyTest, SetOptimizationParamsRecomputesDecayFromCurrentState) {
+    auto splat_data = create_lfs_test_splat_data();
+    LFS strategy(splat_data);
+
+    auto opt_params = param::OptimizationParameters::lfs_defaults();
+    opt_params.iterations = 10'000;
+    opt_params.sh_degree_interval = 10'000;
+    opt_params.max_cap = 32;
+    strategy.initialize(opt_params);
+
+    auto* means_state = strategy.get_optimizer().get_state_mutable(ParamType::Means);
+    auto* scaling_state = strategy.get_optimizer().get_state_mutable(ParamType::Scaling);
+    ASSERT_NE(means_state, nullptr);
+    ASSERT_NE(scaling_state, nullptr);
+    means_state->step_count = 1200;
+    scaling_state->step_count = 1200;
+
+    strategy._mean_lr_unscaled = 2.0e-6;
+    strategy._scale_lr_current = 4.0e-4;
+
+    auto resumed_params = opt_params;
+    resumed_params.iterations = 3000;
+    resumed_params.means_lr_end = 1.0e-7f;
+    resumed_params.scaling_lr_end = 1.0e-4f;
+
+    strategy.set_optimization_params(resumed_params);
+
+    const double expected_mean_gamma =
+        std::pow(resumed_params.means_lr_end / strategy._mean_lr_unscaled,
+                 1.0 / static_cast<double>(resumed_params.iterations - means_state->step_count));
+    const double expected_scale_gamma =
+        std::pow(resumed_params.scaling_lr_end / strategy._scale_lr_current,
+                 1.0 / static_cast<double>(resumed_params.iterations - scaling_state->step_count));
+
+    EXPECT_NEAR(strategy._mean_lr_gamma, expected_mean_gamma, 1e-12);
+    EXPECT_NEAR(strategy._scale_lr_gamma, expected_scale_gamma, 1e-12);
+    EXPECT_NEAR(strategy.get_optimizer().get_param_lr(ParamType::Scaling), strategy._scale_lr_current, 1e-12);
 }
