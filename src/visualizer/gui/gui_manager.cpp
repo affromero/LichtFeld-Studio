@@ -239,8 +239,7 @@ namespace lfs::vis::gui {
 
         LayoutState state;
         state.load();
-
-        if (!state.file_association.empty())
+        if (state.file_association == "declined")
             return;
         if (areFileAssociationsRegistered())
             return;
@@ -261,7 +260,8 @@ namespace lfs::vis::gui {
 
             if (result.button_label == LOC(FileAssociation::YES)) {
                 registerFileAssociations();
-                ls.file_association = "registered";
+                openFileAssociationSettings();
+                return;
             } else if (result.button_label == LOC(FileAssociation::DONT_ASK)) {
                 ls.file_association = "declined";
             } else {
