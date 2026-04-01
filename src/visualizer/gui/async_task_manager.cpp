@@ -666,7 +666,8 @@ namespace lfs::vis::gui {
                     const lfs::io::PlySaveOptions options{
                         .output_path = path,
                         .binary = true,
-                        .async = false};
+                        .async = false,
+                        .extra_attributes = {}};
                     if (auto result = lfs::io::save_ply(*splat_data, options); result) {
                         success = true;
                         update_progress(1.0f, "Complete");
