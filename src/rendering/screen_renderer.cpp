@@ -154,6 +154,8 @@ namespace lfs::rendering {
             glEnable(GL_DEPTH_TEST);
             glDepthMask(GL_TRUE);
             glDepthFunc(GL_ALWAYS);
+        } else {
+            glDisable(GL_DEPTH_TEST);
         }
 
         glDrawArrays(GL_TRIANGLES, 0, 6);
