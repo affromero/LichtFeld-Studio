@@ -9,6 +9,7 @@
 #include "input/input_router.hpp"
 #include "input/key_codes.hpp"
 #include "internal/viewport.hpp"
+#include "rendering/coordinate_conventions.hpp"
 
 #include <gtest/gtest.h>
 #include <variant>
@@ -263,6 +264,29 @@ namespace lfs::vis {
         core::events::cmd::ToggleSplitView{}.emit();
 
         EXPECT_FALSE(controller.isContinuousInputActive());
+    }
+
+    TEST_F(InputControllerFocusTest, FpvModeUsesInPlaceLookForPrimaryCameraDrag) {
+        Viewport viewport(200, 200);
+        InputController controller(nullptr, viewport);
+        viewport.camera.t = glm::vec3(0.0f, 0.0f, 5.0f);
+        viewport.camera.setPivot(glm::vec3(0.0f));
+        viewport.camera.R = glm::mat3(1.0f);
+        controller.setCameraNavigationMode(InputController::CameraNavigationMode::FPV);
+
+        controller.handleMouseButton(static_cast<int>(input::AppMouseButton::MIDDLE),
+                                     input::ACTION_PRESS, 40.0, 50.0);
+        controller.handleMouseMove(40.0, 0.0);
+        controller.handleMouseButton(static_cast<int>(input::AppMouseButton::MIDDLE),
+                                     input::ACTION_RELEASE, 40.0, 0.0);
+
+        const glm::vec3 forward = lfs::rendering::cameraForward(viewport.camera.R);
+        const glm::vec3 to_pivot = glm::normalize(viewport.camera.getPivot() - viewport.camera.t);
+        EXPECT_NEAR(viewport.camera.t.x, 0.0f, 1e-5f);
+        EXPECT_NEAR(viewport.camera.t.y, 0.0f, 1e-5f);
+        EXPECT_NEAR(viewport.camera.t.z, 5.0f, 1e-5f);
+        EXPECT_GT(forward.y, 0.0f);
+        EXPECT_NEAR(glm::dot(forward, to_pivot), 1.0f, 1e-4f);
     }
 
     TEST_F(InputControllerFocusTest, PointerTargetsExposeHoverAndCapturedTargets) {

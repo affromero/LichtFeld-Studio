@@ -29,6 +29,7 @@
 #include "visualizer/scene_coordinate_utils.hpp"
 #include <SDL3/SDL.h>
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <limits>
 #include <imgui.h>
@@ -330,6 +331,20 @@ namespace lfs::vis {
         movement_keys_.down = bindings_.getKeyForAction(input::Action::CAMERA_MOVE_DOWN);
     }
 
+    void InputController::setCameraNavigationMode(const CameraNavigationMode mode) {
+        if (camera_navigation_mode_ == mode)
+            return;
+
+        clearViewportDragState();
+        camera_navigation_mode_ = mode;
+
+        auto& target_viewport = activeKeyboardViewport();
+        float pivot_distance = glm::length(target_viewport.camera.getPivot() - target_viewport.camera.t);
+        if (!std::isfinite(pivot_distance) || pivot_distance < 0.1f)
+            pivot_distance = 5.0f;
+        target_viewport.camera.updatePivotFromCamera(pivot_distance);
+    }
+
     void InputController::onWindowFocusLost() {
         if (current_cursor_ != CursorType::Default) {
             SDL_SetCursor(SDL_GetDefaultCursor());
@@ -535,15 +550,25 @@ namespace lfs::vis {
             case input::Action::CAMERA_ORBIT:
                 if (const auto interaction = resolvePanelInteraction(x, y); interaction && interaction->valid()) {
                     interaction->viewport->camera.initScreenPos(glm::vec2(x, y));
-                    interaction->viewport->camera.startRotateAroundCenter(
-                        glm::vec2(x, y), static_cast<float>(SDL_GetTicks() / 1000.0f));
                     drag_viewport_ = interaction->viewport;
                     drag_split_panel_ = interaction->panel;
                     focusSplitPanel(interaction->panel);
+
+                    if (camera_navigation_mode_ == CameraNavigationMode::FPV) {
+                        float pivot_distance = glm::length(
+                            interaction->viewport->camera.getPivot() - interaction->viewport->camera.t);
+                        if (!std::isfinite(pivot_distance) || pivot_distance < 0.1f)
+                            pivot_distance = 5.0f;
+                        interaction->viewport->camera.updatePivotFromCamera(pivot_distance);
+                        drag_mode_ = DragMode::Rotate;
+                    } else {
+                        interaction->viewport->camera.startRotateAroundCenter(
+                            glm::vec2(x, y), static_cast<float>(SDL_GetTicks() / 1000.0f));
+                        drag_mode_ = DragMode::Orbit;
+                    }
                 } else {
                     break;
                 }
-                drag_mode_ = DragMode::Orbit;
                 drag_button_ = button;
                 break;
 
@@ -687,6 +712,10 @@ namespace lfs::vis {
             Viewport* released_viewport = drag_viewport_;
 
             if (drag_mode_ == DragMode::Pan) {
+                drag_mode_ = DragMode::None;
+                drag_button_ = -1;
+                was_dragging = true;
+            } else if (drag_mode_ == DragMode::Rotate) {
                 drag_mode_ = DragMode::None;
                 drag_button_ = -1;
                 was_dragging = true;
@@ -947,7 +976,7 @@ namespace lfs::vis {
                 target_viewport->camera.translate(pos);
                 break;
             case DragMode::Rotate:
-                target_viewport->camera.rotate(pos);
+                target_viewport->camera.rotateFpv(pos);
                 break;
             case DragMode::Orbit: {
                 float current_time = static_cast<float>(SDL_GetTicks() / 1000.0);
@@ -1396,6 +1425,12 @@ namespace lfs::vis {
         }
 
         if (drag_mode_ == DragMode::Pan && drag_button_released) {
+            drag_mode_ = DragMode::None;
+            drag_button_ = -1;
+            drag_viewport_ = nullptr;
+        }
+
+        if (drag_mode_ == DragMode::Rotate && drag_button_released) {
             drag_mode_ = DragMode::None;
             drag_button_ = -1;
             drag_viewport_ = nullptr;

@@ -36,6 +36,11 @@ namespace lfs::vis {
 
     class LFS_VIS_API InputController {
     public:
+        enum class CameraNavigationMode {
+            Orbit,
+            FPV
+        };
+
         InputController(SDL_Window* window, Viewport& viewport);
         ~InputController();
 
@@ -79,6 +84,9 @@ namespace lfs::vis {
         input::InputBindings& getBindings() { return bindings_; }
         const input::InputBindings& getBindings() const { return bindings_; }
         void loadInputProfile(const std::string& name) { bindings_.loadProfile(name); }
+        [[nodiscard]] CameraNavigationMode cameraNavigationMode() const { return camera_navigation_mode_; }
+        void setCameraNavigationMode(CameraNavigationMode mode);
+        [[nodiscard]] static InputController* instance() { return instance_; }
 
         // Update function for continuous input (WASD movement and inertia)
         void update(float delta_time);
@@ -186,6 +194,7 @@ namespace lfs::vis {
             Brush
         };
         DragMode drag_mode_ = DragMode::None;
+        CameraNavigationMode camera_navigation_mode_ = CameraNavigationMode::Orbit;
         int drag_button_ = -1;
         glm::dvec2 last_mouse_pos_{0, 0};
         float splitter_start_pos_ = 0.5f;

@@ -401,6 +401,12 @@ def free_icon(texture_id: int) -> None:
 def reset_camera() -> None:
     """Reset camera to default position and orientation"""
 
+def get_camera_navigation_mode() -> str:
+    """Get the active camera navigation mode ('orbit' or 'fpv')"""
+
+def set_camera_navigation_mode(mode: str) -> None:
+    """Set the active camera navigation mode"""
+
 def toggle_fullscreen() -> None:
     """Toggle fullscreen mode"""
 

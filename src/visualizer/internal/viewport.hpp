@@ -114,6 +114,15 @@ class Viewport {
             prePos = pos;
         }
 
+        void rotateFpv(const glm::vec2& pos) {
+            float distance_to_pivot = glm::length(pivot - t);
+            if (!std::isfinite(distance_to_pivot) || distance_to_pivot < 0.1f)
+                distance_to_pivot = 5.0f;
+
+            rotate(pos, true);
+            updatePivotFromCamera(distance_to_pivot);
+        }
+
         void rotate_roll(float diff) {
             float ang_rad = diff * rotateRollSpeed;
             glm::mat3 rot_z = glm::mat3(

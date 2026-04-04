@@ -55,6 +55,7 @@
 
 #include "config.h"
 #include "core/checkpoint_format.hpp"
+#include "input/input_controller.hpp"
 #include "python/runner.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "training/strategies/istrategy.hpp"
@@ -1227,6 +1228,37 @@ NB_MODULE(lichtfeld, m) {
     m.def(
         "reset_camera", []() { lfs::core::events::cmd::ResetCamera{}.emit(); },
         "Reset camera to default position and orientation");
+    m.def(
+        "get_camera_navigation_mode", []() -> std::string {
+            const auto* controller = lfs::vis::InputController::instance();
+            if (!controller)
+                return "orbit";
+            return controller->cameraNavigationMode() == lfs::vis::InputController::CameraNavigationMode::FPV
+                       ? "fpv"
+                       : "orbit";
+        },
+        "Get the active camera navigation mode ('orbit' or 'fpv')");
+    m.def(
+        "set_camera_navigation_mode", [](const std::string& mode) {
+            auto* controller = lfs::vis::InputController::instance();
+            if (!controller)
+                return;
+
+            if (mode == "orbit") {
+                controller->setCameraNavigationMode(
+                    lfs::vis::InputController::CameraNavigationMode::Orbit);
+                return;
+            }
+            if (mode == "fpv" || mode == "fly") {
+                controller->setCameraNavigationMode(
+                    lfs::vis::InputController::CameraNavigationMode::FPV);
+                return;
+            }
+
+            throw std::invalid_argument(
+                "camera navigation mode must be 'orbit', 'fpv', or 'fly'");
+        },
+        nb::arg("mode"), "Set the active camera navigation mode");
     m.def(
         "toggle_fullscreen", []() { lfs::core::events::ui::ToggleFullscreen{}.emit(); },
         "Toggle fullscreen mode");

@@ -318,6 +318,22 @@ TEST(ViewportTest, RotateDraggingUpTiltsCameraUp) {
     EXPECT_GT(lfs::rendering::cameraForward(viewport.camera.R).y, 0.0f);
 }
 
+TEST(ViewportTest, FpvRotateKeepsPivotInFrontOfCamera) {
+    Viewport viewport(100, 100);
+    viewport.camera.t = glm::vec3(0.0f, 0.0f, 5.0f);
+    viewport.camera.setPivot(glm::vec3(0.0f));
+    viewport.camera.R = glm::mat3(1.0f);
+    viewport.camera.initScreenPos(glm::vec2(0.0f, 0.0f));
+
+    viewport.camera.rotateFpv(glm::vec2(0.0f, -100.0f));
+
+    const glm::vec3 forward = lfs::rendering::cameraForward(viewport.camera.R);
+    const glm::vec3 to_pivot = glm::normalize(viewport.camera.getPivot() - viewport.camera.t);
+    EXPECT_GT(forward.y, 0.0f);
+    EXPECT_NEAR(glm::length(viewport.camera.getPivot() - viewport.camera.t), 5.0f, 1e-4f);
+    EXPECT_NEAR(glm::dot(forward, to_pivot), 1.0f, 1e-4f);
+}
+
 TEST(ViewportTest, OrbitDraggingUpMovesCameraDownAroundPivot) {
     Viewport viewport(100, 100);
     viewport.camera.t = glm::vec3(0.0f, 0.0f, 5.0f);
