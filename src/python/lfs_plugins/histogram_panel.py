@@ -43,6 +43,7 @@ class HistogramPanel(Panel):
         self._handle = None
 
         self._metric_id = METRICS[0].id
+        self._log_scale_enabled = False
         self._scene_generation = -1
         self._history_generation = -1
         self._last_lang = ""
@@ -94,6 +95,7 @@ class HistogramPanel(Panel):
         model.bind_func("panel_label", lambda: _tr("window.histogram", "Histogram"))
         model.bind_func("analysis_label", lambda: _tr("histogram.title_eyebrow", "Gaussian Analysis"))
         model.bind_func("field_label", lambda: _tr("histogram.field", "Field"))
+        model.bind_func("log_scale_label", lambda: _tr("histogram.log_scale", "Log Scale"))
         model.bind_func("samples_label", lambda: _tr("histogram.samples", "Samples"))
         model.bind_func("range_label", lambda: _tr("histogram.range", "Range"))
         model.bind_func("mean_label", lambda: _tr("histogram.mean", "Mean"))
@@ -133,6 +135,7 @@ class HistogramPanel(Panel):
         model.bind_func("clear_enabled", self._has_marked_range)
         model.bind_func("delete_enabled", lambda: self._has_marked_range() and self._marked_count > 0)
         model.bind("metric_id", lambda: self._metric_id, self._set_metric_id)
+        model.bind("log_scale_enabled", lambda: self._log_scale_enabled, self._set_log_scale_enabled)
         model.bind_event("undo_history", self._on_undo_history)
         model.bind_event("redo_history", self._on_redo_history)
         model.bind_event("clear_mark", self._on_clear_mark)
@@ -207,6 +210,15 @@ class HistogramPanel(Panel):
         self._metric_id = metric_id
         self._rebuild_metric_options()
         self._refresh()
+
+    def _set_log_scale_enabled(self, value):
+        enabled = self._coerce_bool(value)
+        if enabled == self._log_scale_enabled:
+            return
+        self._log_scale_enabled = enabled
+        self._update_bin_records()
+        if self._handle:
+            self._handle.dirty_all()
 
     def _rebuild_metric_options(self):
         if not self._handle:
@@ -320,10 +332,14 @@ class HistogramPanel(Panel):
             self._handle.dirty_all()
 
     def _build_bin_records(self, counts: np.ndarray, edges: np.ndarray) -> Iterable[dict[str, object]]:
-        peak = float(max(int(counts.max()) if counts.size else 0, 1))
+        display_counts = counts.astype(np.float32, copy=False)
+        if self._log_scale_enabled:
+            display_counts = np.log1p(display_counts)
+
+        peak = float(max(float(display_counts.max()) if display_counts.size else 0.0, 1.0))
         marked_lo, marked_hi = self._marked_bounds()
         for index, count in enumerate(counts):
-            ratio = float(count) / peak
+            ratio = float(display_counts[index]) / peak
             height_pct = 0.0 if count <= 0 else max(3.0, ratio * 100.0)
             alpha = 0.16 if count <= 0 else (0.34 + ratio * 0.66)
             left = self._format_value(float(edges[index]))
@@ -832,6 +848,12 @@ class HistogramPanel(Panel):
         self._clear_marked_range(clear_scene=False)
         self._scene_generation = -1
         self._refresh()
+
+    @staticmethod
+    def _coerce_bool(value) -> bool:
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     @staticmethod
     def _format_value(value: float) -> str:

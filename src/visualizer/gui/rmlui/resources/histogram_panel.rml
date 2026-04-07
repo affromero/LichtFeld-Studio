@@ -16,6 +16,12 @@
         <select id="metric-select" class="histogram-select" data-value="metric_id">
           <option data-for="option : metric_options" data-attr-value="option.value">{{ option.label }}</option>
         </select>
+        <div class="histogram-toggle-row">
+          <span class="histogram-toggle-label">{{ log_scale_label }}</span>
+          <label class="histogram-toggle-control">
+            <input type="checkbox" data-checked="log_scale_enabled" />
+          </label>
+        </div>
       </div>
     </div>
 

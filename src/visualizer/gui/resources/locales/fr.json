@@ -1110,6 +1110,7 @@
   "histogram": {
     "title_eyebrow": "Gaussian Analysis",
     "field": "Field",
+    "log_scale": "Echelle logarithmique",
     "samples": "Samples",
     "range": "Range",
     "mean": "Mean",
