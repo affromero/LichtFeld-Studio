@@ -620,12 +620,23 @@ namespace lfs::python {
 
         // Boolean mask
         if (nb::isinstance<PyTensor>(key)) {
-            auto mask_tensor = nb::cast<PyTensor>(key);
-            auto dt = mask_tensor.tensor().dtype();
+            const auto& mask_tensor = nb::cast<const PyTensor&>(key);
+            const auto& mask = mask_tensor.tensor();
+            const auto dt = mask.dtype();
             if (dt != DataType::Bool && dt != DataType::UInt8) {
                 throw std::runtime_error("Mask must be a boolean tensor");
             }
-            return PyTensor(tensor_.masked_select(mask_tensor.tensor()));
+
+            // Match PyTorch semantics for tensor[mask]:
+            // - 1D mask on an ND tensor selects rows along dim 0
+            // - shape-matched masks perform elementwise masked selection
+            const bool is_row_mask =
+                mask.ndim() == 1 &&
+                tensor_.ndim() >= 1 &&
+                mask.shape()[0] == tensor_.shape()[0];
+
+            return PyTensor(is_row_mask ? tensor_.index_select(0, mask)
+                                        : tensor_.masked_select(mask));
         }
 
         throw std::runtime_error("Unsupported index type");

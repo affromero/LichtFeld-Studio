@@ -499,10 +499,12 @@ class HistogramPanel(Panel):
 
     def _resolve_scene_center(self, scene, means: lf.Tensor, finite_rows: lf.Tensor) -> lf.Tensor:
         try:
-            center = self._float_tensor(scene.scene_center).reshape([-1])
-            center = self._to_device(center, self._device_string(means))
-            if center.shape == (3,) and center.isfinite().all().bool_():
-                return center
+            center = getattr(scene, "scene_center", None)
+            if center is not None and int(getattr(center, "ndim", 0) or 0) == 1 and tuple(center.shape) == (3,):
+                center = self._float_tensor(center).reshape([-1])
+                center = self._to_device(center, self._device_string(means))
+                if center.isfinite().all().bool_():
+                    return center
         except Exception:
             pass
 
@@ -536,10 +538,14 @@ class HistogramPanel(Panel):
     def _extract_visible_mask(self, model, values: lf.Tensor) -> lf.Tensor | None:
         try:
             if bool(model.has_deleted_mask()):
-                deleted = model.deleted.contiguous().reshape([-1]).to("bool")
+                deleted = getattr(model, "deleted", None)
+                if deleted is None or int(getattr(deleted, "ndim", 0) or 0) != 1:
+                    return None
+                if int(deleted.shape[0]) != int(values.shape[0]):
+                    return None
+                deleted = deleted.contiguous().reshape([-1]).to("bool")
                 deleted = self._to_device(deleted, self._device_string(values))
-                if int(deleted.shape[0]) == int(values.shape[0]):
-                    return ~deleted
+                return ~deleted
         except Exception:
             pass
         return None
