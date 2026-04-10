@@ -7,10 +7,10 @@
 
 #include "gui/rml_overlay_context.hpp"
 #include "core/logger.hpp"
-#include "gui/rmlui/sdl_rml_key_mapping.hpp"
 #include "gui/rmlui/rml_theme.hpp"
 #include "gui/rmlui/rmlui_manager.hpp"
 #include "gui/rmlui/rmlui_render_interface.hpp"
+#include "gui/rmlui/sdl_rml_key_mapping.hpp"
 #include "internal/resource_paths.hpp"
 #include "theme/theme.hpp"
 
