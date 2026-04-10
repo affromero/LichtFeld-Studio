@@ -144,7 +144,12 @@ def test_compare_heatmap_reuses_primary_metric_and_selects_joint_cells(histogram
 
     x_bins = panel._compare_x_bin_indices.cpu().tolist()
     y_bins = panel._compare_y_bin_indices.cpu().tolist()
-    mask = panel._selection_mask_for_compare_bounds(x_bins[0], x_bins[0], y_bins[0], y_bins[0])
+    mask = panel._selection_mask_for_compare_value_bounds(
+        panel._compare_x_edges[x_bins[0]],
+        panel._compare_x_edges[x_bins[0] + 1],
+        panel._compare_y_edges[y_bins[0]],
+        panel._compare_y_edges[y_bins[0] + 1],
+    )
     numpy.testing.assert_array_equal(mask.cpu().numpy(), numpy.array([True, False, False]))
 
 
@@ -171,7 +176,60 @@ def test_histogram_bin_slider_rebins_and_preserves_marked_range(histogram_panel_
 
     assert len(panel._hist_counts) == 32
     assert panel._marked_bounds() == (8, 15)
+    assert panel._marked_count == 1
     assert panel._peak_text == "1"
+
+
+def test_histogram_rebin_does_not_expand_selected_samples(histogram_panel_module, lf, numpy):
+    panel = histogram_panel_module.HistogramPanel()
+    panel._show_chart = True
+    panel._metric_id = "opacity"
+
+    values = lf.Tensor.from_numpy(numpy.array([0.07, 0.14, 0.40], dtype=numpy.float32))
+    finite_mask = values.isfinite()
+    panel._primary_values = values
+    panel._primary_finite_mask = finite_mask
+    panel._primary_valid_values = values[finite_mask]
+    panel._primary_histogram_min = 0.0
+    panel._primary_histogram_max = 1.0
+    panel._histogram_bin_count = 16
+    panel._rebuild_histogram_from_cache()
+
+    panel._marked_bin_start = 1
+    panel._marked_bin_end = 1
+    panel._sync_marked_range(apply_scene=False)
+
+    assert panel._marked_count == 1
+    assert panel._marked_range_text == "0.0625 to 0.125"
+
+    panel._set_histogram_bin_count(17)
+
+    assert panel._marked_count == 1
+    assert panel._marked_range_text == "0.0625 to 0.125"
+
+
+def test_histogram_drag_can_expand_across_multiple_bins(histogram_panel_module, lf, numpy):
+    panel = histogram_panel_module.HistogramPanel()
+    panel._show_chart = True
+    panel._metric_id = "opacity"
+
+    values = lf.Tensor.from_numpy(numpy.array([0.05, 0.15, 0.35, 0.65, 0.85], dtype=numpy.float32))
+    finite_mask = values.isfinite()
+    panel._primary_values = values
+    panel._primary_finite_mask = finite_mask
+    panel._primary_valid_values = values[finite_mask]
+    panel._primary_histogram_min = 0.0
+    panel._primary_histogram_max = 1.0
+    panel._histogram_bin_count = 16
+    panel._rebuild_histogram_from_cache()
+
+    panel._dragging_mark = True
+    panel._marked_bin_start = 1
+    panel._marked_bin_end = 5
+    panel._sync_marked_range(apply_scene=False)
+
+    assert panel._marked_bounds() == (1, 5)
+    assert panel._marked_count == 2
 
 
 def test_histogram_selection_geometry_accounts_for_bar_gaps(histogram_panel_module):
@@ -214,6 +272,62 @@ def test_compare_bin_sliders_support_rectangular_grids(histogram_panel_module, l
     assert "width: 8.3333%;" in records[0]["style_attr"]
     assert "height: 11.1111%;" in records[0]["style_attr"]
     assert panel._format_compare_bin_count_text() == "12 x 9 bins"
+
+
+def test_compare_rebin_does_not_expand_selected_samples(histogram_panel_module, lf, numpy):
+    panel = histogram_panel_module.HistogramPanel()
+    panel._metric_id = "scale_x"
+    panel._compare_metric_id = "opacity"
+
+    model = _ModelStub(
+        lf,
+        numpy.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]], dtype=numpy.float32),
+        numpy.array([[0.06, 1.0, 1.0], [0.12, 1.0, 1.0], [0.40, 1.0, 1.0]], dtype=numpy.float32),
+        opacity=numpy.array([0.06, 0.12, 0.40], dtype=numpy.float32),
+    )
+    scene = SimpleNamespace(get_nodes=lambda: [])
+
+    primary_values = panel._extract_metric_values(scene, model, panel._metric_id)
+    panel._refresh_compare(scene, model, primary_values, None)
+
+    x_bin = int(panel._compare_x_bin_indices.cpu().tolist()[0])
+    y_bin = int(panel._compare_y_bin_indices.cpu().tolist()[0])
+    panel._compare_mark_start = (x_bin, y_bin)
+    panel._compare_mark_end = (x_bin, y_bin)
+    panel._sync_compare_mark(apply_scene=False)
+
+    assert panel._marked_count == 1
+
+    panel._set_compare_x_bin_count(19)
+    panel._set_compare_y_bin_count(19)
+
+    assert panel._marked_count == 1
+
+
+def test_compare_drag_can_expand_across_multiple_bins(histogram_panel_module, lf, numpy):
+    panel = histogram_panel_module.HistogramPanel()
+    panel._metric_id = "scale_x"
+    panel._compare_metric_id = "opacity"
+
+    model = _ModelStub(
+        lf,
+        numpy.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]], dtype=numpy.float32),
+        numpy.array([[0.06, 1.0, 1.0], [0.12, 1.0, 1.0], [0.40, 1.0, 1.0]], dtype=numpy.float32),
+        opacity=numpy.array([0.06, 0.12, 0.40], dtype=numpy.float32),
+    )
+    scene = SimpleNamespace(get_nodes=lambda: [])
+
+    primary_values = panel._extract_metric_values(scene, model, panel._metric_id)
+    panel._refresh_compare(scene, model, primary_values, None)
+
+    x_bins = panel._compare_x_bin_indices.cpu().tolist()
+    y_bins = panel._compare_y_bin_indices.cpu().tolist()
+    panel._dragging_compare_mark = True
+    panel._compare_mark_start = (min(x_bins[0], x_bins[1]), min(y_bins[0], y_bins[1]))
+    panel._compare_mark_end = (max(x_bins[0], x_bins[1]), max(y_bins[0], y_bins[1]))
+    panel._sync_compare_mark(apply_scene=False)
+
+    assert panel._marked_count == 2
 
 
 def test_histogram_panel_can_toggle_between_bottom_dock_and_floating(histogram_panel_module, lf):

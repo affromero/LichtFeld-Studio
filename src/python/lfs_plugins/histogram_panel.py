@@ -119,9 +119,15 @@ class HistogramPanel(Panel):
         self._dragging_mark = False
         self._marked_bin_start: int | None = None
         self._marked_bin_end: int | None = None
+        self._marked_value_min: float | None = None
+        self._marked_value_max: float | None = None
         self._dragging_compare_mark = False
         self._compare_mark_start: tuple[int, int] | None = None
         self._compare_mark_end: tuple[int, int] | None = None
+        self._compare_mark_x_min: float | None = None
+        self._compare_mark_x_max: float | None = None
+        self._compare_mark_y_min: float | None = None
+        self._compare_mark_y_max: float | None = None
         self._marked_count = 0
         self._marked_range_text = _tr("histogram.no_marked_range", "No marked range")
         self._marked_count_text = _trf("histogram.gaussian_count", "{count} Gaussians", count="0")
@@ -507,7 +513,7 @@ class HistogramPanel(Panel):
                 self._handle.update_record_list("bins", [])
             return
 
-        mark_ratios = self._capture_histogram_mark_ratios()
+        mark_bounds = self._capture_histogram_mark_value_bounds()
         selection_bin_indices = self._build_selection_bin_indices(
             self._primary_values,
             self._primary_finite_mask,
@@ -537,9 +543,9 @@ class HistogramPanel(Panel):
         self._axis_min = self._format_value(edges[0])
         self._axis_max = self._format_value(edges[-1])
 
-        if mark_ratios is not None:
-            self._restore_histogram_mark_from_ratios(*mark_ratios)
-            self._sync_marked_range(apply_scene=False)
+        if mark_bounds is not None:
+            self._restore_histogram_mark_from_value_bounds(*mark_bounds)
+            self._sync_marked_range(apply_scene=False, preserve_value_bounds=True)
         elif reset_footer:
             self._reset_footer_mark_state(clear_scene=False)
 
@@ -562,7 +568,7 @@ class HistogramPanel(Panel):
                 self._handle.update_record_list("compare_bins", [])
             return
 
-        mark_ratios = self._capture_compare_mark_ratios()
+        mark_bounds = self._capture_compare_mark_value_bounds()
         x_bin_indices = self._build_selection_bin_indices(
             self._primary_values,
             self._compare_finite_mask,
@@ -611,9 +617,9 @@ class HistogramPanel(Panel):
         self._compare_y_axis_min = self._format_value(y_edges[0])
         self._compare_y_axis_max = self._format_value(y_edges[-1])
 
-        if mark_ratios is not None:
-            self._restore_compare_mark_from_ratios(*mark_ratios)
-            self._sync_compare_mark(apply_scene=False)
+        if mark_bounds is not None:
+            self._restore_compare_mark_from_value_bounds(*mark_bounds)
+            self._sync_compare_mark(apply_scene=False, preserve_value_bounds=True)
         elif self._active_mark_source == "compare":
             self._reset_footer_mark_state(clear_scene=False)
 
@@ -1152,60 +1158,111 @@ class HistogramPanel(Panel):
             return
         self._handle.update_record_list("compare_bins", list(self._build_compare_bin_records()))
 
-    def _compare_count_for_bounds(self, x_lo: int, x_hi: int, y_lo: int, y_hi: int) -> int:
-        if self._compare_counts is None:
+    def _compare_count_for_value_bounds(self, x_min: float, x_max: float, y_min: float, y_max: float) -> int:
+        mask = self._selection_mask_for_compare_value_bounds(x_min, x_max, y_min, y_max)
+        if mask is None:
             return 0
-        total = 0
-        for y_bin in range(y_lo, y_hi + 1):
-            row_offset = y_bin * self._compare_x_bin_count
-            for x_bin in range(x_lo, x_hi + 1):
-                total += int(self._compare_counts[row_offset + x_bin])
-        return total
+        return int(mask.count_nonzero())
 
-    def _capture_histogram_mark_ratios(self) -> tuple[float, float] | None:
-        old_bin_count = len(self._hist_counts) if self._hist_counts else self._histogram_bin_count
-        lo, hi = self._marked_bounds(old_bin_count)
+    def _capture_histogram_mark_value_bounds(self) -> tuple[float, float] | None:
+        if self._marked_value_min is not None and self._marked_value_max is not None:
+            return float(self._marked_value_min), float(self._marked_value_max)
+        if self._hist_edges is None:
+            return None
+        lo, hi = self._marked_bounds_from_indices(len(self._hist_edges) - 1)
         if lo is None or hi is None:
             return None
-        return lo / old_bin_count, (hi + 1) / old_bin_count
+        return float(self._hist_edges[lo]), float(self._hist_edges[hi + 1])
 
-    def _restore_histogram_mark_from_ratios(self, start_ratio: float, end_ratio: float):
-        self._marked_bin_start = self._lower_bin_from_ratio(start_ratio, self._histogram_bin_count)
-        self._marked_bin_end = self._upper_bin_from_ratio(end_ratio, self._histogram_bin_count)
+    def _restore_histogram_mark_from_value_bounds(self, range_min: float, range_max: float):
+        self._marked_value_min = float(min(range_min, range_max))
+        self._marked_value_max = float(max(range_min, range_max))
+        self._marked_bin_start = self._lower_bin_for_value(
+            self._marked_value_min,
+            self._primary_histogram_min,
+            self._primary_histogram_max,
+            self._histogram_bin_count,
+        )
+        self._marked_bin_end = self._upper_bin_for_value(
+            self._marked_value_max,
+            self._primary_histogram_min,
+            self._primary_histogram_max,
+            self._histogram_bin_count,
+        )
 
-    def _capture_compare_mark_ratios(self) -> tuple[float, float, float, float] | None:
-        old_x_count = len(self._compare_x_edges) - 1 if self._compare_x_edges is not None else self._compare_x_bin_count
-        old_y_count = len(self._compare_y_edges) - 1 if self._compare_y_edges is not None else self._compare_y_bin_count
-        x_lo, x_hi, y_lo, y_hi = self._compare_marked_bounds(old_x_count, old_y_count)
+    def _capture_compare_mark_value_bounds(self) -> tuple[float, float, float, float] | None:
+        if (
+            self._compare_mark_x_min is not None and
+            self._compare_mark_x_max is not None and
+            self._compare_mark_y_min is not None and
+            self._compare_mark_y_max is not None
+        ):
+            return (
+                float(self._compare_mark_x_min),
+                float(self._compare_mark_x_max),
+                float(self._compare_mark_y_min),
+                float(self._compare_mark_y_max),
+            )
+        if self._compare_x_edges is None or self._compare_y_edges is None:
+            return None
+        x_lo, x_hi, y_lo, y_hi = self._compare_marked_bounds_from_indices(
+            len(self._compare_x_edges) - 1,
+            len(self._compare_y_edges) - 1,
+        )
         if x_lo is None or x_hi is None or y_lo is None or y_hi is None:
             return None
         return (
-            x_lo / old_x_count,
-            (x_hi + 1) / old_x_count,
-            y_lo / old_y_count,
-            (y_hi + 1) / old_y_count,
+            float(self._compare_x_edges[x_lo]),
+            float(self._compare_x_edges[x_hi + 1]),
+            float(self._compare_y_edges[y_lo]),
+            float(self._compare_y_edges[y_hi + 1]),
         )
 
-    def _restore_compare_mark_from_ratios(
+    def _restore_compare_mark_from_value_bounds(
         self,
-        x_start_ratio: float,
-        x_end_ratio: float,
-        y_start_ratio: float,
-        y_end_ratio: float,
+        x_min: float,
+        x_max: float,
+        y_min: float,
+        y_max: float,
     ):
+        self._compare_mark_x_min = float(min(x_min, x_max))
+        self._compare_mark_x_max = float(max(x_min, x_max))
+        self._compare_mark_y_min = float(min(y_min, y_max))
+        self._compare_mark_y_max = float(max(y_min, y_max))
         self._compare_mark_start = (
-            self._lower_bin_from_ratio(x_start_ratio, self._compare_x_bin_count),
-            self._lower_bin_from_ratio(y_start_ratio, self._compare_y_bin_count),
+            self._lower_bin_for_value(
+                self._compare_mark_x_min,
+                self._compare_x_min,
+                self._compare_x_max,
+                self._compare_x_bin_count,
+            ),
+            self._lower_bin_for_value(
+                self._compare_mark_y_min,
+                self._compare_y_min,
+                self._compare_y_max,
+                self._compare_y_bin_count,
+            ),
         )
         self._compare_mark_end = (
-            self._upper_bin_from_ratio(x_end_ratio, self._compare_x_bin_count),
-            self._upper_bin_from_ratio(y_end_ratio, self._compare_y_bin_count),
+            self._upper_bin_for_value(
+                self._compare_mark_x_max,
+                self._compare_x_min,
+                self._compare_x_max,
+                self._compare_x_bin_count,
+            ),
+            self._upper_bin_for_value(
+                self._compare_mark_y_max,
+                self._compare_y_min,
+                self._compare_y_max,
+                self._compare_y_bin_count,
+            ),
         )
 
-    def _marked_count_for_bins(self, lo: int, hi: int) -> int:
-        if self._hist_prefix_counts is None:
+    def _marked_count_for_value_bounds(self, range_min: float, range_max: float) -> int:
+        mask = self._selection_mask_for_value_bounds(range_min, range_max)
+        if mask is None:
             return 0
-        return int(self._hist_prefix_counts[hi + 1] - self._hist_prefix_counts[lo])
+        return int(mask.count_nonzero())
 
     @staticmethod
     def _percentile_from_sorted(sorted_values: lf.Tensor, percentile: float) -> float:
@@ -1308,7 +1365,7 @@ class HistogramPanel(Panel):
         step = max(bar_width + gap_width, 1e-6)
         return min(self._histogram_bin_count - 1, max(0, int(math.floor(local_x / step))))
 
-    def _marked_bounds(self, bin_count: int | None = None) -> tuple[int | None, int | None]:
+    def _marked_bounds_from_indices(self, bin_count: int | None = None) -> tuple[int | None, int | None]:
         if self._marked_bin_start is None or self._marked_bin_end is None:
             return None, None
         bin_count = max(1, self._histogram_bin_count if bin_count is None else int(bin_count))
@@ -1316,11 +1373,36 @@ class HistogramPanel(Panel):
         hi = min(bin_count - 1, max(self._marked_bin_start, self._marked_bin_end))
         return lo, hi
 
+    def _marked_bounds(self, bin_count: int | None = None) -> tuple[int | None, int | None]:
+        bin_count = max(1, self._histogram_bin_count if bin_count is None else int(bin_count))
+        if self._dragging_mark:
+            return self._marked_bounds_from_indices(bin_count)
+        if (
+            self._marked_value_min is not None and
+            self._marked_value_max is not None and
+            self._primary_valid_values is not None
+        ):
+            return (
+                self._lower_bin_for_value(
+                    self._marked_value_min,
+                    self._primary_histogram_min,
+                    self._primary_histogram_max,
+                    bin_count,
+                ),
+                self._upper_bin_for_value(
+                    self._marked_value_max,
+                    self._primary_histogram_min,
+                    self._primary_histogram_max,
+                    bin_count,
+                ),
+            )
+        return self._marked_bounds_from_indices(bin_count)
+
     def _has_marked_range(self) -> bool:
         lo, hi = self._marked_bounds()
         return lo is not None and hi is not None
 
-    def _compare_marked_bounds(
+    def _compare_marked_bounds_from_indices(
         self,
         x_bin_count: int | None = None,
         y_bin_count: int | None = None,
@@ -1335,6 +1417,31 @@ class HistogramPanel(Panel):
         y_hi = min(y_bin_count - 1, max(self._compare_mark_start[1], self._compare_mark_end[1]))
         return x_lo, x_hi, y_lo, y_hi
 
+    def _compare_marked_bounds(
+        self,
+        x_bin_count: int | None = None,
+        y_bin_count: int | None = None,
+    ) -> tuple[int | None, int | None, int | None, int | None]:
+        x_bin_count = max(1, self._compare_x_bin_count if x_bin_count is None else int(x_bin_count))
+        y_bin_count = max(1, self._compare_y_bin_count if y_bin_count is None else int(y_bin_count))
+        if self._dragging_compare_mark:
+            return self._compare_marked_bounds_from_indices(x_bin_count, y_bin_count)
+        if (
+            self._compare_mark_x_min is not None and
+            self._compare_mark_x_max is not None and
+            self._compare_mark_y_min is not None and
+            self._compare_mark_y_max is not None and
+            self._compare_valid_x_values is not None and
+            self._compare_valid_y_values is not None
+        ):
+            return (
+                self._lower_bin_for_value(self._compare_mark_x_min, self._compare_x_min, self._compare_x_max, x_bin_count),
+                self._upper_bin_for_value(self._compare_mark_x_max, self._compare_x_min, self._compare_x_max, x_bin_count),
+                self._lower_bin_for_value(self._compare_mark_y_min, self._compare_y_min, self._compare_y_max, y_bin_count),
+                self._upper_bin_for_value(self._compare_mark_y_max, self._compare_y_min, self._compare_y_max, y_bin_count),
+            )
+        return self._compare_marked_bounds_from_indices(x_bin_count, y_bin_count)
+
     def _has_compare_marked_range(self) -> bool:
         x_lo, x_hi, y_lo, y_hi = self._compare_marked_bounds()
         return x_lo is not None and x_hi is not None and y_lo is not None and y_hi is not None
@@ -1342,7 +1449,7 @@ class HistogramPanel(Panel):
     def _has_any_mark(self) -> bool:
         return self._has_marked_range() or self._has_compare_marked_range()
 
-    def _sync_marked_range(self, apply_scene: bool):
+    def _sync_marked_range(self, apply_scene: bool, preserve_value_bounds: bool = False):
         if self._hist_counts is None or self._hist_edges is None:
             self._reset_footer_mark_state(clear_scene=apply_scene)
             return
@@ -1353,14 +1460,16 @@ class HistogramPanel(Panel):
             return
 
         self._active_mark_source = "histogram"
+        if not preserve_value_bounds or self._marked_value_min is None or self._marked_value_max is None:
+            self._marked_value_min = float(self._hist_edges[lo])
+            self._marked_value_max = float(self._hist_edges[hi + 1])
+
         left_px, width_px = self._histogram_selection_geometry(lo, hi)
         self._selection_left_style = f"{left_px:.2f}px"
         self._selection_width_style = f"{max(width_px, 1.0):.2f}px"
 
-        range_min = float(self._hist_edges[lo])
-        range_max = float(self._hist_edges[hi + 1])
-        self._marked_count = self._marked_count_for_bins(lo, hi)
-        self._marked_range_text = self._format_range_text(range_min, range_max)
+        self._marked_count = self._marked_count_for_value_bounds(self._marked_value_min, self._marked_value_max)
+        self._marked_range_text = self._format_range_text(self._marked_value_min, self._marked_value_max)
         self._marked_count_text = _trf(
             "histogram.gaussian_count",
             "{count} Gaussians",
@@ -1373,7 +1482,7 @@ class HistogramPanel(Panel):
 
         self._update_bin_records()
         if apply_scene:
-            self._apply_scene_selection(lo, hi)
+            self._apply_scene_selection(self._marked_value_min, self._marked_value_max)
         if self._handle:
             self._handle.dirty_all()
 
@@ -1397,7 +1506,7 @@ class HistogramPanel(Panel):
         width = ((hi - lo) + 1) * bar_width + max(0, hi - lo) * gap_width
         return left, width
 
-    def _sync_compare_mark(self, apply_scene: bool):
+    def _sync_compare_mark(self, apply_scene: bool, preserve_value_bounds: bool = False):
         if self._compare_counts is None or self._compare_x_edges is None or self._compare_y_edges is None:
             self._reset_footer_mark_state(clear_scene=apply_scene)
             return
@@ -1408,6 +1517,20 @@ class HistogramPanel(Panel):
             return
 
         self._active_mark_source = "compare"
+        if not preserve_value_bounds or any(
+            bound is None
+            for bound in (
+                self._compare_mark_x_min,
+                self._compare_mark_x_max,
+                self._compare_mark_y_min,
+                self._compare_mark_y_max,
+            )
+        ):
+            self._compare_mark_x_min = float(self._compare_x_edges[x_lo])
+            self._compare_mark_x_max = float(self._compare_x_edges[x_hi + 1])
+            self._compare_mark_y_min = float(self._compare_y_edges[y_lo])
+            self._compare_mark_y_max = float(self._compare_y_edges[y_hi + 1])
+
         left_ratio = x_lo / self._compare_x_bin_count
         width_ratio = (x_hi + 1) / self._compare_x_bin_count - left_ratio
         top_ratio = (self._compare_y_bin_count - 1 - y_hi) / self._compare_y_bin_count
@@ -1417,16 +1540,17 @@ class HistogramPanel(Panel):
         self._compare_selection_width_style = f"{max(width_ratio * 100.0, 1.0):.2f}%"
         self._compare_selection_height_style = f"{max(height_ratio * 100.0, 1.0):.2f}%"
 
-        x_min = float(self._compare_x_edges[x_lo])
-        x_max = float(self._compare_x_edges[x_hi + 1])
-        y_min = float(self._compare_y_edges[y_lo])
-        y_max = float(self._compare_y_edges[y_hi + 1])
-        self._marked_count = self._compare_count_for_bounds(x_lo, x_hi, y_lo, y_hi)
+        self._marked_count = self._compare_count_for_value_bounds(
+            self._compare_mark_x_min,
+            self._compare_mark_x_max,
+            self._compare_mark_y_min,
+            self._compare_mark_y_max,
+        )
         self._marked_range_text = _trf(
             "histogram.compare.range_value",
             "X {x_range} | Y {y_range}",
-            x_range=self._format_range_text(x_min, x_max),
-            y_range=self._format_range_text(y_min, y_max),
+            x_range=self._format_range_text(self._compare_mark_x_min, self._compare_mark_x_max),
+            y_range=self._format_range_text(self._compare_mark_y_min, self._compare_mark_y_max),
         )
         self._marked_count_text = _trf(
             "histogram.gaussian_count",
@@ -1440,15 +1564,26 @@ class HistogramPanel(Panel):
 
         self._update_compare_bin_records()
         if apply_scene:
-            self._apply_compare_scene_selection(x_lo, x_hi, y_lo, y_hi)
+            self._apply_compare_scene_selection(
+                self._compare_mark_x_min,
+                self._compare_mark_x_max,
+                self._compare_mark_y_min,
+                self._compare_mark_y_max,
+            )
         if self._handle:
             self._handle.dirty_all()
 
     def _reset_footer_mark_state(self, clear_scene: bool):
         self._marked_bin_start = None
         self._marked_bin_end = None
+        self._marked_value_min = None
+        self._marked_value_max = None
         self._compare_mark_start = None
         self._compare_mark_end = None
+        self._compare_mark_x_min = None
+        self._compare_mark_x_max = None
+        self._compare_mark_y_min = None
+        self._compare_mark_y_max = None
         self._marked_count = 0
         self._marked_range_text = _tr("histogram.no_marked_range", "No marked range")
         self._marked_count_text = _trf("histogram.gaussian_count", "{count} Gaussians", count="0")
@@ -1479,6 +1614,8 @@ class HistogramPanel(Panel):
     def _clear_histogram_mark(self, clear_scene: bool):
         self._marked_bin_start = None
         self._marked_bin_end = None
+        self._marked_value_min = None
+        self._marked_value_max = None
         self._selection_left_style = "0%"
         self._selection_width_style = "0%"
         if self._active_mark_source == "histogram":
@@ -1490,6 +1627,10 @@ class HistogramPanel(Panel):
     def _clear_compare_mark(self, clear_scene: bool):
         self._compare_mark_start = None
         self._compare_mark_end = None
+        self._compare_mark_x_min = None
+        self._compare_mark_x_max = None
+        self._compare_mark_y_min = None
+        self._compare_mark_y_max = None
         self._compare_selection_left_style = "0%"
         self._compare_selection_top_style = "0%"
         self._compare_selection_width_style = "0%"
@@ -1503,32 +1644,47 @@ class HistogramPanel(Panel):
     def _clear_all_marks(self, clear_scene: bool):
         self._reset_marked_state(clear_scene=clear_scene)
 
-    def _selection_mask_for_bins(self, lo: int, hi: int) -> lf.Tensor | None:
-        if self._selection_bin_indices is None:
+    def _selection_mask_for_value_bounds(self, range_min: float, range_max: float) -> lf.Tensor | None:
+        if self._primary_values is None or self._primary_finite_mask is None:
             return None
+        return self._primary_finite_mask & self._value_range_mask(
+            self._primary_values,
+            range_min,
+            range_max,
+            self._primary_histogram_max,
+        )
 
-        mask = self._selection_bin_indices >= lo
-        mask = mask & (self._selection_bin_indices <= hi)
+    def _selection_mask_for_compare_value_bounds(
+        self,
+        x_min: float,
+        x_max: float,
+        y_min: float,
+        y_max: float,
+    ) -> lf.Tensor | None:
+        if self._primary_values is None or self._compare_values is None or self._compare_finite_mask is None:
+            return None
+        mask = self._compare_finite_mask & self._value_range_mask(
+            self._primary_values,
+            x_min,
+            x_max,
+            self._compare_x_max,
+        )
+        mask = mask & self._value_range_mask(
+            self._compare_values,
+            y_min,
+            y_max,
+            self._compare_y_max,
+        )
         return mask
 
-    def _selection_mask_for_compare_bounds(self, x_lo: int, x_hi: int, y_lo: int, y_hi: int) -> lf.Tensor | None:
-        if self._compare_x_bin_indices is None or self._compare_y_bin_indices is None:
-            return None
-
-        mask = self._compare_x_bin_indices >= x_lo
-        mask = mask & (self._compare_x_bin_indices <= x_hi)
-        mask = mask & (self._compare_y_bin_indices >= y_lo)
-        mask = mask & (self._compare_y_bin_indices <= y_hi)
-        return mask
-
-    def _apply_scene_selection(self, lo: int, hi: int):
+    def _apply_scene_selection(self, range_min: float, range_max: float):
         scene = lf.get_scene()
         if scene is None or not scene.is_valid():
             self._selection_owned = False
             self._pending_selection_commit = False
             return
 
-        mask = self._selection_mask_for_bins(lo, hi)
+        mask = self._selection_mask_for_value_bounds(range_min, range_max)
         if mask is None or not self._any_true(mask):
             scene.clear_selection()
             self._selection_owned = False
@@ -1543,14 +1699,14 @@ class HistogramPanel(Panel):
             self._selection_owned = False
             self._pending_selection_commit = False
 
-    def _apply_compare_scene_selection(self, x_lo: int, x_hi: int, y_lo: int, y_hi: int):
+    def _apply_compare_scene_selection(self, x_min: float, x_max: float, y_min: float, y_max: float):
         scene = lf.get_scene()
         if scene is None or not scene.is_valid():
             self._selection_owned = False
             self._pending_selection_commit = False
             return
 
-        mask = self._selection_mask_for_compare_bounds(x_lo, x_hi, y_lo, y_hi)
+        mask = self._selection_mask_for_compare_value_bounds(x_min, x_max, y_min, y_max)
         if mask is None or not self._any_true(mask):
             scene.clear_selection()
             self._selection_owned = False
@@ -1715,15 +1871,26 @@ class HistogramPanel(Panel):
             return
 
         if self._active_mark_source == "compare":
-            x_lo, x_hi, y_lo, y_hi = self._compare_marked_bounds()
-            if x_lo is None or x_hi is None or y_lo is None or y_hi is None:
+            if any(
+                bound is None
+                for bound in (
+                    self._compare_mark_x_min,
+                    self._compare_mark_x_max,
+                    self._compare_mark_y_min,
+                    self._compare_mark_y_max,
+                )
+            ):
                 return
-            self._apply_compare_scene_selection(x_lo, x_hi, y_lo, y_hi)
+            self._apply_compare_scene_selection(
+                self._compare_mark_x_min,
+                self._compare_mark_x_max,
+                self._compare_mark_y_min,
+                self._compare_mark_y_max,
+            )
         else:
-            lo, hi = self._marked_bounds()
-            if lo is None or hi is None or self._hist_edges is None:
+            if self._marked_value_min is None or self._marked_value_max is None:
                 return
-            self._apply_scene_selection(lo, hi)
+            self._apply_scene_selection(self._marked_value_min, self._marked_value_max)
         error_message = self._execute_delete_pipeline()
         if error_message is not None:
             self._status_hint = _trf(
@@ -1780,6 +1947,36 @@ class HistogramPanel(Panel):
         bin_count = max(1, int(bin_count))
         ratio = min(1.0, max(0.0, float(end_ratio)))
         return min(bin_count - 1, max(0, int(math.ceil(ratio * bin_count) - 1)))
+
+    @classmethod
+    def _lower_bin_for_value(cls, value: float, axis_min: float, axis_max: float, bin_count: int) -> int:
+        span = axis_max - axis_min
+        if not math.isfinite(span) or span <= 0.0:
+            return max(0, int(bin_count) - 1)
+        ratio = (float(value) - axis_min) / span
+        return cls._lower_bin_from_ratio(ratio, bin_count)
+
+    @classmethod
+    def _upper_bin_for_value(cls, value: float, axis_min: float, axis_max: float, bin_count: int) -> int:
+        span = axis_max - axis_min
+        if not math.isfinite(span) or span <= 0.0:
+            return max(0, int(bin_count) - 1)
+        ratio = (float(value) - axis_min) / span
+        return cls._upper_bin_from_ratio(ratio, bin_count)
+
+    @staticmethod
+    def _upper_bound_is_inclusive(upper: float, axis_max: float) -> bool:
+        return upper >= axis_max or math.isclose(upper, axis_max, rel_tol=1e-6, abs_tol=1e-9)
+
+    def _value_range_mask(self, values: lf.Tensor, lower: float, upper: float, axis_max: float) -> lf.Tensor:
+        lo = float(min(lower, upper))
+        hi = float(max(lower, upper))
+        mask = values >= lo
+        if self._upper_bound_is_inclusive(hi, axis_max):
+            mask = mask & (values <= hi)
+        else:
+            mask = mask & (values < hi)
+        return mask
 
     @staticmethod
     def _format_value(value: float) -> str:
