@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "environment_pass.hpp"
-#include "core/logger.hpp"
 #include "core/executable_path.hpp"
+#include "core/logger.hpp"
 #include "internal/resource_paths.hpp"
 #include <glad/glad.h>
 
