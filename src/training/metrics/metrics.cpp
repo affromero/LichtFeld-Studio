@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "metrics.hpp"
+#include "../components/bilateral_grid.hpp"
+#include "../components/ppisp.hpp"
+#include "../components/ppisp_controller_pool.hpp"
 #include "../rasterization/fast_rasterizer.hpp"
 #include "../rasterization/gsplat_rasterizer.hpp"
 #include "core/cuda/undistort/undistort.hpp"
@@ -404,10 +407,50 @@ namespace lfs::training {
         return create_dataloader_from_dataset(dataset, workers);
     }
 
+    namespace {
+        lfs::core::Tensor apply_eval_appearance_correction(
+            const lfs::core::param::TrainingParameters& params,
+            lfs::core::Camera* cam,
+            lfs::core::Tensor image,
+            BilateralGrid* bilateral_grid,
+            PPISP* ppisp,
+            PPISPControllerPool* ppisp_controller_pool) {
+            auto corrected = std::move(image);
+
+            if (bilateral_grid && params.optimization.use_bilateral_grid) {
+                corrected = bilateral_grid->apply(corrected, cam->uid());
+            }
+
+            if (ppisp && params.optimization.use_ppisp) {
+                const bool known_camera = ppisp->is_known_camera(cam->camera_id());
+                const bool known_frame = ppisp->is_known_frame(cam->uid());
+
+                if (known_frame) {
+                    corrected = ppisp->apply(corrected, cam->camera_id(), cam->uid());
+                } else if (known_camera) {
+                    const int camera_idx = ppisp->camera_index(cam->camera_id());
+                    if (ppisp_controller_pool && params.optimization.ppisp_use_controller) {
+                        auto pred = ppisp_controller_pool->predict(camera_idx, corrected.unsqueeze(0), 1.0f);
+                        corrected = ppisp->apply_with_controller_params(corrected, pred, camera_idx);
+                    } else {
+                        auto neutral = lfs::core::Tensor::zeros(
+                            {1, 9}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
+                        corrected = ppisp->apply_with_controller_params(corrected, neutral, camera_idx);
+                    }
+                }
+            }
+
+            return corrected.clamp(0.0f, 1.0f);
+        }
+    } // namespace
+
     EvalMetrics MetricsEvaluator::evaluate(const int iteration,
                                            const lfs::core::SplatData& splatData,
                                            std::shared_ptr<CameraDataset> val_dataset,
-                                           lfs::core::Tensor& background) {
+                                           lfs::core::Tensor& background,
+                                           BilateralGrid* bilateral_grid,
+                                           PPISP* ppisp,
+                                           PPISPControllerPool* ppisp_controller_pool) {
         if (!_params.optimization.enable_eval) {
             throw std::runtime_error("Evaluation is not enabled");
         }
@@ -471,7 +514,13 @@ namespace lfs::training {
             } else {
                 r_output = fast_rasterize(*cam, splatData_mutable, background, _params.optimization.mip_filter);
             }
-            r_output.image = r_output.image.clamp(0.0f, 1.0f);
+            r_output.image = apply_eval_appearance_correction(
+                _params,
+                cam,
+                std::move(r_output.image),
+                bilateral_grid,
+                ppisp,
+                ppisp_controller_pool);
 
             float psnr = 0.0f;
             float ssim = 0.0f;

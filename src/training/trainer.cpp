@@ -753,7 +753,8 @@ namespace lfs::training {
             config.crf_channel *= reg_weight;
 
             ppisp_ = std::make_unique<PPISP>(get_total_iterations(), config);
-            for (const auto& cam : train_dataset_->get_cameras()) {
+            for (size_t i = 0; i < train_dataset_->size(); ++i) {
+                auto* cam = train_dataset_->get_camera(i);
                 if (cam) {
                     ppisp_->register_frame(cam->uid(), cam->camera_id());
                 }
@@ -787,7 +788,8 @@ namespace lfs::training {
         metadata.images_folder = params_.dataset.images;
         metadata.camera_ids = ppisp_->ordered_camera_ids();
 
-        for (const auto& cam : train_dataset_->get_cameras()) {
+        for (size_t i = 0; i < train_dataset_->size(); ++i) {
+            auto* cam = train_dataset_->get_camera(i);
             if (!cam) {
                 continue;
             }
@@ -876,7 +878,8 @@ namespace lfs::training {
         mappings.frame_mapping.reserve(static_cast<size_t>(ppisp_->num_frames()));
         std::unordered_set<std::string> seen_target_frames;
         seen_target_frames.reserve(static_cast<size_t>(ppisp_->num_frames()));
-        for (const auto& cam : train_dataset_->get_cameras()) {
+        for (size_t i = 0; i < train_dataset_->size(); ++i) {
+            auto* cam = train_dataset_->get_camera(i);
             if (!cam) {
                 continue;
             }
@@ -1041,7 +1044,7 @@ namespace lfs::training {
             ppisp_controller_pool_ = std::make_unique<PPISPControllerPool>(num_cameras, distillation_iters, config);
 
             size_t max_h = 0, max_w = 0;
-            for (const auto& cam : train_dataset_->get_cameras()) {
+            for (const auto& cam : train_dataset_->get_split_cameras()) {
                 if (cam) {
                     max_h = std::max(max_h, static_cast<size_t>(cam->image_height()));
                     max_w = std::max(max_w, static_cast<size_t>(cam->image_width()));
@@ -1136,7 +1139,7 @@ namespace lfs::training {
 
         size_t alpha_count = 0;
         size_t masks_found = 0;
-        for (const auto& cam : train_dataset_->get_cameras()) {
+        for (const auto& cam : train_dataset_->get_split_cameras()) {
             if (cam && cam->has_alpha())
                 ++alpha_count;
             if (cam && cam->has_mask())
@@ -1145,7 +1148,7 @@ namespace lfs::training {
 
         if (opt.use_alpha_as_mask && alpha_count > 0) {
             LOG_INFO("Using alpha channel as mask source ({}/{} cameras){}",
-                     alpha_count, train_dataset_->get_cameras().size(),
+                     alpha_count, train_dataset_->size(),
                      opt.invert_masks ? " (inverted)" : "");
             return {};
         }
@@ -1748,14 +1751,14 @@ namespace lfs::training {
             // Apply undistortion to camera intrinsics (params already precomputed at load time)
             if (params.optimization.undistort) {
                 int prepared = 0;
-                for (auto& cam : train_dataset_->get_cameras()) {
+                for (auto& cam : train_dataset_->get_split_cameras()) {
                     if (cam && cam->has_distortion()) {
                         cam->prepare_undistortion();
                         ++prepared;
                     }
                 }
                 if (val_dataset_) {
-                    for (auto& cam : val_dataset_->get_cameras()) {
+                    for (auto& cam : val_dataset_->get_split_cameras()) {
                         if (cam && cam->has_distortion()) {
                             cam->prepare_undistortion();
                         }
@@ -2102,7 +2105,7 @@ namespace lfs::training {
             snapshot.resize_factor = std::max(1, train_dataset_->get_resize_factor());
             snapshot.max_width = train_dataset_->get_max_width();
 
-            for (const auto& cam : train_dataset_->get_cameras()) {
+            for (const auto& cam : train_dataset_->get_split_cameras()) {
                 if (cam && cam->is_undistort_prepared()) {
                     snapshot.undistort = true;
                     break;
@@ -3187,7 +3190,6 @@ namespace lfs::training {
             if (!in_sparsification) {
                 strategy_->pre_step(iter, r_output);
             }
-
             {
                 DeferredEvents deferred;
                 {
@@ -3250,10 +3252,12 @@ namespace lfs::training {
                     auto metrics = evaluator_->evaluate(iter,
                                                         strategy_->get_model(),
                                                         val_dataset_,
-                                                        background_);
+                                                        background_,
+                                                        bilateral_grid_.get(),
+                                                        ppisp_.get(),
+                                                        ppisp_controller_pool_.get());
                     LOG_INFO("{}", metrics.to_string());
                 }
-
                 const bool save_regular_phase_output = get_active_sparsify_steps() > 0 &&
                                                        iter == get_sparsity_boundary_iteration();
                 if (save_regular_phase_output) {
@@ -3605,7 +3609,6 @@ namespace lfs::training {
             if (progress_) {
                 progress_->print_final_summary(static_cast<int>(strategy_->get_model().size()));
             }
-
             is_running_ = false;
             training_complete_ = true;
 
