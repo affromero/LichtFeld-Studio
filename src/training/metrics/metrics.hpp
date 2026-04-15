@@ -19,6 +19,9 @@
 #include <vector>
 
 namespace lfs::training {
+    class BilateralGrid;
+    class PPISP;
+    class PPISPControllerPool;
 
     // Peak Signal-to-Noise Ratio
     class PSNR {
@@ -122,7 +125,10 @@ namespace lfs::training {
         EvalMetrics evaluate(const int iteration,
                              const lfs::core::SplatData& splatData,
                              std::shared_ptr<CameraDataset> val_dataset,
-                             lfs::core::Tensor& background);
+                             lfs::core::Tensor& background,
+                             BilateralGrid* bilateral_grid,
+                             PPISP* ppisp,
+                             PPISPControllerPool* ppisp_controller_pool);
 
         // Save final report
         void save_report() const {

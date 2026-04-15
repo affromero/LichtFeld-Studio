@@ -226,6 +226,20 @@ namespace lfs::training {
             return cameras_[indices_[index]].get();
         }
 
+        std::shared_ptr<lfs::core::Camera> get_camera_shared(size_t index) const {
+            assert(index < indices_.size());
+            return cameras_[indices_[index]];
+        }
+
+        std::vector<std::shared_ptr<lfs::core::Camera>> get_split_cameras() const {
+            std::vector<std::shared_ptr<lfs::core::Camera>> split_cameras;
+            split_cameras.reserve(indices_.size());
+            for (const size_t idx : indices_) {
+                split_cameras.push_back(cameras_[idx]);
+            }
+            return split_cameras;
+        }
+
         /// Get single example by index
         CameraExample get(size_t index) const {
             if (index >= indices_.size()) {
@@ -274,7 +288,8 @@ namespace lfs::training {
 
         [[nodiscard]] std::optional<lfs::core::Camera*> get_camera_by_filename(
             const std::string& filename) const {
-            for (const auto& cam : cameras_) {
+            for (const size_t idx : indices_) {
+                const auto& cam = cameras_[idx];
                 if (cam->image_name() == filename) {
                     return cam.get();
                 }
@@ -290,14 +305,15 @@ namespace lfs::training {
 
         /// Returns fraction of non-JPEG images (0.0 = all JPEG, 1.0 = none)
         [[nodiscard]] float get_non_jpeg_ratio() const {
-            if (cameras_.empty())
+            if (indices_.empty())
                 return 0.0f;
-            const auto count = std::count_if(cameras_.begin(), cameras_.end(), [](const auto& cam) {
+            const auto count = std::count_if(indices_.begin(), indices_.end(), [this](const size_t idx) {
+                const auto& cam = cameras_[idx];
                 auto ext = cam->image_path().extension().string();
                 std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
                 return ext != ".jpg" && ext != ".jpeg";
             });
-            return static_cast<float>(count) / static_cast<float>(cameras_.size());
+            return static_cast<float>(count) / static_cast<float>(indices_.size());
         }
 
     private:
@@ -567,7 +583,7 @@ namespace lfs::training {
                 const size_t camera_idx = it->second;
                 sequence_to_camera_.erase(it);
 
-                auto& cam = dataset_->get_cameras()[camera_idx];
+                auto cam = dataset_->get_camera_shared(camera_idx);
                 const auto shape = ready.tensor.shape();
                 cam->set_image_dimensions(static_cast<int>(shape[2]), static_cast<int>(shape[1]));
 
@@ -616,7 +632,7 @@ namespace lfs::training {
                     break;
 
                 const size_t camera_idx = (*indices)[0];
-                auto& cam = dataset_->get_cameras()[camera_idx];
+                auto cam = dataset_->get_camera_shared(camera_idx);
                 const size_t seq_id = next_sequence_id_++;
                 sequence_to_camera_[seq_id] = camera_idx;
 

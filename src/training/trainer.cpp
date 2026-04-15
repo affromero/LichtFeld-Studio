@@ -34,6 +34,7 @@
 
 #include <filesystem>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cuda_runtime.h>
@@ -194,9 +195,9 @@ namespace lfs::training {
             PPISPConfig config;
             config.lr = params_.optimization.ppisp_lr;
             config.warmup_steps = params_.optimization.ppisp_warmup_steps;
-
             ppisp_ = std::make_unique<PPISP>(params_.optimization.iterations, config);
-            for (const auto& cam : train_dataset_->get_cameras()) {
+            for (size_t i = 0; i < train_dataset_->size(); ++i) {
+                auto* cam = train_dataset_->get_camera(i);
                 if (cam) {
                     ppisp_->register_frame(cam->uid(), cam->camera_id());
                 }
@@ -235,7 +236,7 @@ namespace lfs::training {
             ppisp_controller_pool_ = std::make_unique<PPISPControllerPool>(num_cameras, distillation_iters, config);
 
             size_t max_h = 0, max_w = 0;
-            for (const auto& cam : train_dataset_->get_cameras()) {
+            for (const auto& cam : train_dataset_->get_split_cameras()) {
                 if (cam) {
                     max_h = std::max(max_h, static_cast<size_t>(cam->image_height()));
                     max_w = std::max(max_w, static_cast<size_t>(cam->image_width()));
@@ -275,7 +276,7 @@ namespace lfs::training {
 
         size_t alpha_count = 0;
         size_t masks_found = 0;
-        for (const auto& cam : train_dataset_->get_cameras()) {
+        for (const auto& cam : train_dataset_->get_split_cameras()) {
             if (cam && cam->has_alpha())
                 ++alpha_count;
             if (cam && cam->has_mask())
@@ -284,7 +285,7 @@ namespace lfs::training {
 
         if (opt.use_alpha_as_mask && alpha_count > 0) {
             LOG_INFO("Using alpha channel as mask source ({}/{} cameras){}",
-                     alpha_count, train_dataset_->get_cameras().size(),
+                     alpha_count, train_dataset_->size(),
                      opt.invert_masks ? " (inverted)" : "");
             return {};
         }
@@ -603,14 +604,14 @@ namespace lfs::training {
             // Apply undistortion to camera intrinsics (params already precomputed at load time)
             if (params.optimization.undistort) {
                 int prepared = 0;
-                for (auto& cam : train_dataset_->get_cameras()) {
+                for (auto& cam : train_dataset_->get_split_cameras()) {
                     if (cam && cam->has_distortion()) {
                         cam->prepare_undistortion();
                         ++prepared;
                     }
                 }
                 if (val_dataset_) {
-                    for (auto& cam : val_dataset_->get_cameras()) {
+                    for (auto& cam : val_dataset_->get_split_cameras()) {
                         if (cam && cam->has_distortion()) {
                             cam->prepare_undistortion();
                         }
@@ -824,7 +825,7 @@ namespace lfs::training {
             snapshot.resize_factor = std::max(1, train_dataset_->get_resize_factor());
             snapshot.max_width = train_dataset_->get_max_width();
 
-            for (const auto& cam : train_dataset_->get_cameras()) {
+            for (const auto& cam : train_dataset_->get_split_cameras()) {
                 if (cam && cam->is_undistort_prepared()) {
                     snapshot.undistort = true;
                     break;
@@ -1767,14 +1768,14 @@ namespace lfs::training {
 
                 // Select diverse camera on first use (lazy initialization)
                 if (!training_video_camera_selected_) {
-                    const auto& cameras = train_dataset_->get_cameras();
+                    const auto cameras = train_dataset_->get_split_cameras();
                     training_video_camera_idx_ = VideoRenderer::select_diverse_camera(
                         cameras, 0.25f, 512);
                     training_video_camera_selected_ = true;
                 }
 
                 // Use selected camera for training video
-                const auto& cameras = train_dataset_->get_cameras();
+                const auto cameras = train_dataset_->get_split_cameras();
                 auto ref_cam = cameras[training_video_camera_idx_];
                 video_renderer_->capture_training_frame(*ref_cam, strategy_->get_model(), background_, iter);
             }
@@ -1830,7 +1831,10 @@ namespace lfs::training {
                     auto metrics = evaluator_->evaluate(iter,
                                                         strategy_->get_model(),
                                                         val_dataset_,
-                                                        background_);
+                                                        background_,
+                                                        bilateral_grid_.get(),
+                                                        ppisp_.get(),
+                                                        ppisp_controller_pool_.get());
                     LOG_INFO("{}", metrics.to_string());
 
                     // Save best checkpoint when new best PSNR is achieved
@@ -1888,7 +1892,7 @@ namespace lfs::training {
                         // Render rotation/orbit video around the scene
                         if (train_dataset_ && train_dataset_->size() > 0) {
                             auto rotation_result = video_renderer_->render_rotation_video(
-                                iter, train_dataset_->get_cameras(), strategy_->get_model(), background_,
+                                iter, train_dataset_->get_split_cameras(), strategy_->get_model(), background_,
                                 params_.dataset.output_path);
                             if (!rotation_result.success) {
                                 LOG_WARN("Rotation video rendering failed: {}", rotation_result.error_message);
@@ -2201,7 +2205,7 @@ namespace lfs::training {
 
                         if (train_dataset_ && train_dataset_->size() > 0) {
                             auto rotation_result = video_renderer_->render_rotation_video(
-                                best_iter, train_dataset_->get_cameras(), strategy_->get_model(), background_,
+                                best_iter, train_dataset_->get_split_cameras(), strategy_->get_model(), background_,
                                 params_.dataset.output_path);
                             if (rotation_result.success) {
                                 // Rename to best_rotating.mp4

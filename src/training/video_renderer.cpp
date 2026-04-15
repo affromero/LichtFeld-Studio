@@ -317,7 +317,7 @@ namespace lfs::training {
         result.video_path = video_dir / std::format("walkthrough_iter{:06d}.mp4", iteration);
 
         // Get cameras from validation dataset
-        const auto& cameras = val_dataset->get_cameras();
+        const auto cameras = val_dataset->get_split_cameras();
 
         return render_video(cameras, model, background, result.video_path);
     }
