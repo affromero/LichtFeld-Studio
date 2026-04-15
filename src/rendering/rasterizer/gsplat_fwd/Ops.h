@@ -121,7 +121,9 @@ namespace gsplat_fwd {
         const float* radial_coeffs,       // [C, 6/4] optional
         const float* tangential_coeffs,   // [C, 2] optional
         const float* thin_prism_coeffs,   // [C, 2] optional
+        const float* model_transforms,    // [num_transforms, 4, 4] row-major optional
         const int* transform_indices,     // [N_total] optional
+        int num_transforms,
         const bool* node_visibility_mask, // optional
         int num_visibility_nodes,
         const int* visible_indices, // [M] maps output idx → global gaussian idx, nullptr = all visible
@@ -147,6 +149,9 @@ namespace gsplat_fwd {
         const float* backgrounds, // [C, channels] (can be nullptr)
         const bool* masks,        // [C, tile_height, tile_width] (can be nullptr)
         const float* depths,      // [C, M] per-gaussian depths (M-sized from projection)
+        const float* model_transforms, // [num_transforms, 4, 4] row-major optional
+        const int* transform_indices,  // [N_total] optional
+        int num_transforms,
         // dimensions
         uint32_t C,
         uint32_t N,
