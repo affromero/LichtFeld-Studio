@@ -116,6 +116,18 @@ namespace gsplat_lfs {
         cudaMemcpyAsync(&n_isects, d_cum_tiles + n_elements - 1, sizeof(int64_t),
                         cudaMemcpyDeviceToHost, stream);
         cudaStreamSynchronize(stream);
+
+        // Reject clearly invalid counts before allocating large output buffers.
+        constexpr int64_t MAX_REASONABLE_ISECTS = 10'000'000'000LL;
+        if (n_isects < 0 || n_isects > MAX_REASONABLE_ISECTS) {
+            fprintf(stderr,
+                    "[ERROR] Unreasonable n_isects=%lld (likely numerical instability). "
+                    "Check for NaN/Inf in model parameters.\n",
+                    static_cast<long long>(n_isects));
+            result.n_isects = 0;
+            return result;
+        }
+
         result.n_isects = static_cast<int32_t>(n_isects);
 
         if (n_isects == 0) {

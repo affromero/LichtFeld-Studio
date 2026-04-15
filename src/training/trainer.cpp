@@ -3276,7 +3276,7 @@ namespace lfs::training {
                         if (plateau_scheduler->is_at_min_lr() &&
                             plateau_scheduler->get_bad_evals() >= plateau_scheduler->get_config().patience) {
                             LOG_WARN("Early stopping: LR at minimum ({:.2e}) with no improvement "
-                                     "for {} evaluations. Using best checkpoint.",
+                                     "for {} evaluations. Stopping training.",
                                      plateau_scheduler->get_config().min_lr,
                                      plateau_scheduler->get_bad_evals());
                             stop_requested_.store(true);
