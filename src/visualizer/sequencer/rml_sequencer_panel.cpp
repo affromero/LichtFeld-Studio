@@ -1208,7 +1208,8 @@ namespace lfs::vis {
             if (render)
                 render->register_external_texture(source, texture_id,
                                                   gui::FilmStripRenderer::THUMB_WIDTH,
-                                                  gui::FilmStripRenderer::THUMB_HEIGHT);
+                                                  gui::FilmStripRenderer::THUMB_HEIGHT,
+                                                  true);
             active_sources.insert(source);
 
             thumb_el->SetProperty("display", "block");

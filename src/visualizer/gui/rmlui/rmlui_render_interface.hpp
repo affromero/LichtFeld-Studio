@@ -30,7 +30,7 @@ namespace lfs::vis::gui {
         void process_pending_preview_uploads();
         void clear_pending_preview_loads();
         void register_external_texture(const Rml::String& source, unsigned int texture_id,
-                                       int width, int height);
+                                       int width, int height, bool flip_y = false);
         void unregister_external_texture(const Rml::String& source);
 
     private:

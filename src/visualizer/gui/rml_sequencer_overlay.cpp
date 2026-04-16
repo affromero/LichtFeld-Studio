@@ -478,7 +478,7 @@ namespace lfs::vis::gui {
 
         preview_source_ = new_source;
         render->register_external_texture(preview_source_, texture_id,
-                                          static_cast<int>(width), static_cast<int>(height));
+                                          static_cast<int>(width), static_cast<int>(height), true);
 
         el_preview_window_->SetProperty("left", std::format("{:.1f}px", left));
         el_preview_window_->SetProperty("top", std::format("{:.1f}px", top));
