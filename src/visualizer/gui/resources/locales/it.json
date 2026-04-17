@@ -996,7 +996,9 @@
     "confirm_uninstall_message": "Vuoi davvero disinstallare \"{name}\"?",
     "confirm_uninstall_yes": "Sì",
     "confirm_uninstall_no": "No",
-    "load_on_startup": "Carica all'avvio"
+    "load_on_startup": "Carica all'avvio",
+    "view.grid": "Vista a griglia",
+    "view.list": "Vista a elenco"
   },
   "sequencer": {
     "edit_focal_length": "Modifica lunghezza focale...",

@@ -996,7 +996,9 @@
     "confirm_uninstall_message": "Möchten Sie \"{name}\" wirklich deinstallieren?",
     "confirm_uninstall_yes": "Ja",
     "confirm_uninstall_no": "Nein",
-    "load_on_startup": "Beim Start laden"
+    "load_on_startup": "Beim Start laden",
+    "view.grid": "Rasteransicht",
+    "view.list": "Listenansicht"
   },
   "sequencer": {
     "edit_focal_length": "Brennweite bearbeiten...",

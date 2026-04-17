@@ -996,7 +996,9 @@
     "confirm_uninstall_message": "Weet je zeker dat je \"{name}\" wilt verwijderen?",
     "confirm_uninstall_yes": "Ja",
     "confirm_uninstall_no": "Nee",
-    "load_on_startup": "Laden bij opstarten"
+    "load_on_startup": "Laden bij opstarten",
+    "view.grid": "Rasterweergave",
+    "view.list": "Lijstweergave"
   },
   "sequencer": {
     "edit_focal_length": "Brandpuntsafstand bewerken...",

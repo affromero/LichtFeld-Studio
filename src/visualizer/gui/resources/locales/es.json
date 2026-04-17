@@ -996,7 +996,9 @@
     "confirm_uninstall_message": "¿Seguro que deseas desinstalar \"{name}\"?",
     "confirm_uninstall_yes": "Sí",
     "confirm_uninstall_no": "No",
-    "load_on_startup": "Cargar al inicio"
+    "load_on_startup": "Cargar al inicio",
+    "view.grid": "Vista de cuadrícula",
+    "view.list": "Vista de lista"
   },
   "sequencer": {
     "edit_focal_length": "Editar distancia focal...",
