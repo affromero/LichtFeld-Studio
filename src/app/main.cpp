@@ -16,7 +16,15 @@
 #include <filesystem>
 #include <print>
 
+// pxr/base/tf/hashset.h pulls in the deprecated <ext/hash_set> GNU extension.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcpp"
+#endif
 #include <pxr/base/plug/registry.h>
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 namespace {
     // Register OpenUSD plugin resources deployed at <exe_dir>/../lib/usd/.
