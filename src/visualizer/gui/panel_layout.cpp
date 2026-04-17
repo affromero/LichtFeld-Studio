@@ -305,6 +305,7 @@ namespace lfs::vis::gui {
             bottom_dock_hovering_edge_ = false;
             bottom_dock_resizing_ = false;
             bottom_dock_visible_ = false;
+            bottom_dock_top_y_ = -1.0f;
             prev_mouse_y_ = input.mouse_y;
             return;
         }
@@ -320,6 +321,7 @@ namespace lfs::vis::gui {
             bottom_dock_hovering_edge_ = false;
             bottom_dock_resizing_ = false;
             bottom_dock_visible_ = false;
+            bottom_dock_top_y_ = -1.0f;
             prev_mouse_y_ = input.mouse_y;
             return;
         }
@@ -383,6 +385,7 @@ namespace lfs::vis::gui {
             reg.preload_panels_direct(PanelSpace::BottomDock, panel_w, panel_h, draw_ctx,
                                       panel_y, panel_y + panel_h, &dock_input);
         bottom_dock_visible_ = preloaded_h > 0.0f;
+        bottom_dock_top_y_ = bottom_dock_visible_ ? panel_y : -1.0f;
         if (!bottom_dock_visible_)
             return;
 
@@ -451,9 +454,7 @@ namespace lfs::vis::gui {
     float PanelLayoutManager::computeBottomDockReservedHeight(const bool show_main_panel,
                                                               const bool ui_hidden,
                                                               const ScreenState& screen) const {
-        const bool has_docked_bottom_panel =
-            show_sequencer_ && PanelRegistry::instance().has_panels(PanelSpace::BottomDock);
-        if (!show_main_panel || ui_hidden || !has_docked_bottom_panel)
+        if (!show_main_panel || ui_hidden || !bottom_dock_visible_)
             return 0.0f;
 
         const float dpi = lfs::python::get_shared_dpi_scale();
