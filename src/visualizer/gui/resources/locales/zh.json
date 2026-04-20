@@ -380,7 +380,8 @@
     "keyframe_easing.ease_out": "缓出",
     "keyframe_easing.ease_in_out": "缓入缓出",
     "keyframe_label": "关键帧 {index}  ({time:.2f}s)",
-    "search": "搜索"
+    "search": "搜索",
+    "show_in_file_manager": "在文件管理器中显示"
   },
   "export": {
     "title": "导出",

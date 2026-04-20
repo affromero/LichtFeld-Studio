@@ -380,7 +380,8 @@
     "keyframe_easing.ease_out": "Desaceleracion suave",
     "keyframe_easing.ease_in_out": "Aceleracion/desaceleracion suave",
     "keyframe_label": "Fotograma clave {index}  ({time:.2f}s)",
-    "search": "Buscar"
+    "search": "Buscar",
+    "show_in_file_manager": "Mostrar en el explorador de archivos"
   },
   "export": {
     "title": "Exportar",

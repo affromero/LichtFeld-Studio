@@ -1531,6 +1531,11 @@ namespace lfs::vis::gui {
                 items.push_back(make_action(
                     tr(string_keys::Scene::GO_TO_CAMERA_VIEW),
                     prefixed(std::format("go_to_camera:{}", node->camera_uid))));
+                if (!node->image_path.empty()) {
+                    items.push_back(make_action(
+                        tr(string_keys::Scene::SHOW_IN_FILE_MANAGER),
+                        prefixed(std::format("show_in_file_manager:{}", node_id))));
+                }
                 items.push_back(make_action(
                     node->training_enabled ? tr(string_keys::Scene::DISABLE_FOR_TRAINING)
                                            : tr(string_keys::Scene::ENABLE_FOR_TRAINING),
@@ -1710,6 +1715,17 @@ namespace lfs::vis::gui {
         if (kind == "go_to_camera" && parts.size() >= 2) {
             cmd::GoToCamView{.cam_id = std::stoi(parts[1])}.emit();
             Blur();
+        } else if (kind == "show_in_file_manager" && parts.size() >= 2) {
+            core::NodeId node_id = core::NULL_NODE;
+            if (parseNodeId(parts[1], node_id)) {
+                if (const auto* node = scene->getNodeById(node_id);
+                    node && !node->image_path.empty()) {
+                    if (!lfs::core::reveal_in_file_manager(
+                            lfs::core::utf8_to_path(node->image_path))) {
+                        LOG_WARN("Failed to reveal image in file manager: {}", node->image_path);
+                    }
+                }
+            }
         } else if ((kind == "enable_train" || kind == "disable_train") && parts.size() >= 2) {
             core::NodeId node_id = core::NULL_NODE;
             if (parseNodeId(parts[1], node_id)) {

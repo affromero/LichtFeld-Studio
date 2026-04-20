@@ -380,7 +380,8 @@
     "keyframe_easing.ease_out": "점진적 종료",
     "keyframe_easing.ease_in_out": "점진적 시작/종료",
     "keyframe_label": "키프레임 {index}  ({time:.2f}s)",
-    "search": "검색"
+    "search": "검색",
+    "show_in_file_manager": "파일 관리자에서 표시"
   },
   "export": {
     "title": "내보내기",

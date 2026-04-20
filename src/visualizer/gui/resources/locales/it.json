@@ -380,7 +380,8 @@
     "keyframe_easing.ease_out": "Uscita morbida",
     "keyframe_easing.ease_in_out": "Ingresso/Uscita morbidi",
     "keyframe_label": "Fotogramma chiave {index}  ({time:.2f}s)",
-    "search": "Cerca"
+    "search": "Cerca",
+    "show_in_file_manager": "Mostra nel file manager"
   },
   "export": {
     "title": "Esporta",

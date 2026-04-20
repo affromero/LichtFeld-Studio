@@ -380,7 +380,8 @@
     "keyframe_easing.ease_out": "Ease Out",
     "keyframe_easing.ease_in_out": "Ease In-Out",
     "keyframe_label": "Keyframe {index}  ({time:.2f}s)",
-    "search": "Search"
+    "search": "Search",
+    "show_in_file_manager": "Show in File Manager"
   },
   "export": {
     "title": "Export",

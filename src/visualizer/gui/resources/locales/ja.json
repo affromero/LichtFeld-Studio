@@ -380,7 +380,8 @@
     "keyframe_easing.ease_out": "イーズアウト",
     "keyframe_easing.ease_in_out": "イーズインアウト",
     "keyframe_label": "キーフレーム {index}  ({time:.2f}s)",
-    "search": "検索"
+    "search": "検索",
+    "show_in_file_manager": "ファイルマネージャーで表示"
   },
   "export": {
     "title": "エクスポート",

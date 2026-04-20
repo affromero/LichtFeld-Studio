@@ -380,7 +380,8 @@
     "keyframe_easing.ease_out": "Lagodne wyjscie",
     "keyframe_easing.ease_in_out": "Lagodne wejscie/wyjscie",
     "keyframe_label": "Klatka kluczowa {index}  ({time:.2f}s)",
-    "search": "Szukaj"
+    "search": "Szukaj",
+    "show_in_file_manager": "Pokaż w menedżerze plików"
   },
   "export": {
     "title": "Eksportuj",

@@ -380,7 +380,8 @@
     "keyframe_easing.ease_out": "Langzaam uit",
     "keyframe_easing.ease_in_out": "Langzaam in/uit",
     "keyframe_label": "Keyframe {index}  ({time:.2f}s)",
-    "search": "Zoeken"
+    "search": "Zoeken",
+    "show_in_file_manager": "Tonen in bestandsbeheer"
   },
   "export": {
     "title": "Exporteren",
