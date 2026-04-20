@@ -37,7 +37,14 @@ build*/**
 *.pt
 !weights/*.pt
 lichtfeld-studio.aps
+__pycache__/
 .vs__pycache__/
 *.pyc
+*.pyo
 src/python/stubs/lichtfeld/build_info.pyi
 tasks/
+
+# USD generated files
+lib/
+generatedSchema.usda
+plugInfo.json

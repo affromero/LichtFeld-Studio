@@ -830,7 +830,7 @@ NB_MODULE(lichtfeld, m) {
             lfs::python::invoke_export(format, path, node_names, sh_degree);
         },
         nb::arg("format"), nb::arg("path"), nb::arg("node_names"), nb::arg("sh_degree"),
-        "Export scene nodes to file. Format: 0=PLY, 1=SOG, 2=SPZ, 3=HTML, 4=USD.");
+        "Export scene nodes to file. Format: 0=PLY, 1=SOG, 2=SPZ, 3=HTML, 4=USD, 5=USDZ NuRec.");
 
     m.def(
         "save_config_file",
@@ -880,6 +880,31 @@ NB_MODULE(lichtfeld, m) {
             return nb::make_tuple(lg->getDataMin(), lg->getDataMax());
         },
         "Push loss data to a loss-graph element, returns (data_min, data_max)");
+
+    m.def(
+        "psnr_buffer", []() -> std::vector<float> {
+            const auto* const tm = lfs::python::get_trainer_manager();
+            if (!tm)
+                return {};
+            auto psnr_deque = tm->getPSNRBuffer();
+            return std::vector<float>(psnr_deque.begin(), psnr_deque.end());
+        },
+        "Get the recent PSNR history as a list of floats");
+
+    m.def(
+        "push_psnr_to_element",
+        [](lfs::python::PyRmlElement& elem, const std::vector<float>& data) -> nb::tuple {
+            auto* raw = elem.raw();
+            if (!raw)
+                return nb::make_tuple(0.0f, 1.0f);
+            auto* lg = dynamic_cast<lfs::vis::gui::LossGraphElement*>(raw);
+            if (!lg)
+                return nb::make_tuple(0.0f, 1.0f);
+            std::deque<float> deque(data.begin(), data.end());
+            lg->setData(deque);
+            return nb::make_tuple(lg->getDataMin(), lg->getDataMax());
+        },
+        "Push PSNR data to a psnr-graph element, returns (data_min, data_max)");
 
     // Trainer status bar bindings
     m.def(
@@ -1389,6 +1414,14 @@ NB_MODULE(lichtfeld, m) {
     m.def(
         "toggle_ui", []() { lfs::core::events::ui::ToggleUI{}.emit(); },
         "Toggle UI overlay visibility");
+    m.def(
+        "toggle_independent_split_view", []() {
+            auto* controller = lfs::vis::InputController::instance();
+            if (!controller)
+                return;
+            controller->toggleIndependentSplitView();
+        },
+        "Toggle independent split view");
 
     m.def(
         "get_render_mode", []() -> RenderMode {
