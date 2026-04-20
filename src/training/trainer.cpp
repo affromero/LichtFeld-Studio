@@ -713,6 +713,9 @@ namespace lfs::training {
 
             // Initialize the evaluator - it handles all metrics internally
             evaluator_ = std::make_unique<lfs::training::MetricsEvaluator>(params_);
+            if (bilateral_grid_) {
+                evaluator_->set_bilateral_grid(bilateral_grid_.get());
+            }
             LOG_DEBUG("Metrics evaluator initialized");
 
             // Initialize video renderer if enabled
@@ -723,8 +726,16 @@ namespace lfs::training {
                 video_config.loop = params_.optimization.video_loop;
                 video_config.mip_filter = params_.optimization.mip_filter;
                 video_renderer_ = std::make_unique<VideoRenderer>(video_config);
-                LOG_DEBUG("Video renderer initialized (fps={}, frames_between={}, loop={})",
-                          video_config.fps, video_config.frames_between, video_config.loop);
+                // Attach the trained bilateral grid so walkthrough frames at
+                // training poses get the same color correction the training
+                // loop applies — without this, video PSNR understates the
+                // reported training PSNR by 5-7 dB.
+                if (bilateral_grid_) {
+                    video_renderer_->set_bilateral_grid(bilateral_grid_.get());
+                }
+                LOG_DEBUG("Video renderer initialized (fps={}, frames_between={}, loop={}, bilateral={})",
+                          video_config.fps, video_config.frames_between, video_config.loop,
+                          bilateral_grid_ != nullptr);
             }
 
             // Resume from checkpoint if provided
@@ -1893,6 +1904,14 @@ namespace lfs::training {
                             if (!rotation_result.success) {
                                 LOG_WARN("Rotation video rendering failed: {}", rotation_result.error_message);
                             }
+
+                            // Spiral walkthrough (helical offset along trajectory)
+                            auto spiral_result = video_renderer_->render_spiral_video(
+                                iter, train_dataset_->get_cameras(), strategy_->get_model(), background_,
+                                params_.dataset.output_path);
+                            if (!spiral_result.success) {
+                                LOG_WARN("Spiral video rendering failed: {}", spiral_result.error_message);
+                            }
                         }
 
                         // Write training progress video
@@ -2209,14 +2228,28 @@ namespace lfs::training {
                                 std::filesystem::rename(rotation_result.video_path, best_path);
                                 LOG_INFO("Best rotation video saved: {}", best_path.string());
                             }
+
+                            // Spiral walkthrough for the best checkpoint
+                            auto spiral_result = video_renderer_->render_spiral_video(
+                                best_iter, train_dataset_->get_cameras(), strategy_->get_model(), background_,
+                                params_.dataset.output_path);
+                            if (spiral_result.success) {
+                                const auto best_path = video_dir / "best_spiral.mp4";
+                                std::filesystem::rename(spiral_result.video_path, best_path);
+                                LOG_INFO("Best spiral video saved: {}", best_path.string());
+                            }
                         }
 
-                        if (val_dataset_) {
+                        // Walkthrough: prefer train_dataset + bilateral grid so
+                        // every frame reflects what the training forward pass
+                        // learned (bilateral(render, uid) ≈ GT for train cams).
+                        // Fall back to val_dataset if no eval split.
+                        auto walkthrough_ds = train_dataset_ ? train_dataset_ : val_dataset_;
+                        if (walkthrough_ds) {
                             auto walkthrough_result = video_renderer_->render_validation_video(
-                                best_iter, val_dataset_, strategy_->get_model(), background_,
+                                best_iter, walkthrough_ds, strategy_->get_model(), background_,
                                 params_.dataset.output_path);
                             if (walkthrough_result.success) {
-                                // Rename to best_walkthrough.mp4
                                 const auto best_path = video_dir / "best_walkthrough.mp4";
                                 std::filesystem::rename(walkthrough_result.video_path, best_path);
                                 LOG_INFO("Best walkthrough video saved: {}", best_path.string());

@@ -293,6 +293,10 @@ namespace lfs::training {
         return best_idx;
     }
 
+    void VideoRenderer::set_bilateral_grid(BilateralGrid* bilateral_grid) {
+        bilateral_grid_ = bilateral_grid;
+    }
+
     VideoRenderResult VideoRenderer::render_validation_video(
         int iteration,
         std::shared_ptr<CameraDataset> val_dataset,
@@ -316,10 +320,28 @@ namespace lfs::training {
         // Generate output path
         result.video_path = video_dir / std::format("walkthrough_iter{:06d}.mp4", iteration);
 
-        // Get cameras from validation dataset
-        const auto& cameras = val_dataset->get_cameras();
+        // Iterate only the dataset's split-filtered cameras via get_camera(i)
+        // (get_cameras() returns cameras_ — the full unfiltered list).
+        // This is critical: passing train_dataset here must yield only the
+        // 186 TRAIN cams, not all 213.
+        std::vector<std::shared_ptr<lfs::core::Camera>> split_cameras;
+        split_cameras.reserve(val_dataset->size());
+        const auto& all_cameras = val_dataset->get_cameras();
+        for (size_t i = 0; i < val_dataset->size(); ++i) {
+            auto* raw = val_dataset->get_camera(i);
+            // Find the shared_ptr wrapping this raw pointer so InterpolatedCamera
+            // keeps ownership semantics consistent with interpolate_camera_path.
+            for (const auto& sp : all_cameras) {
+                if (sp.get() == raw) {
+                    split_cameras.push_back(sp);
+                    break;
+                }
+            }
+        }
+        LOG_INFO("Walkthrough using {} split cameras (of {} total)",
+                 split_cameras.size(), all_cameras.size());
 
-        return render_video(cameras, model, background, result.video_path);
+        return render_video(split_cameras, model, background, result.video_path);
     }
 
     VideoRenderResult VideoRenderer::render_video(
@@ -345,13 +367,15 @@ namespace lfs::training {
             return result;
         }
 
-        LOG_INFO("Rendering walkthrough video with {} keyframe cameras, {} frames between",
-                 cameras.size(), config_.frames_between);
-
-        // Use cameras in original order (dataset order is typically sequential)
-        // Catmull-Rom spline interpolation handles smooth transitions
+        // Walkthrough always renders at exact training poses (frames_between=0)
+        // so every frame reflects training-time PSNR. Interpolation between
+        // sparse training views (e.g. BLK2GO 91 cm vehicle-speed baseline)
+        // produces novel views well outside the model's generalization cone
+        // and looks like liquid-blob "goop". Spiral video covers the
+        // novel-view-around-trajectory case with small, controlled offsets.
+        const int effective_frames_between = 0;
         const auto interpolated_cameras = interpolate_camera_path(
-            cameras, config_.frames_between, config_.loop);
+            cameras, effective_frames_between, config_.loop);
 
         if (interpolated_cameras.empty()) {
             result.error_message = "Failed to generate interpolated camera path";
@@ -359,7 +383,14 @@ namespace lfs::training {
             return result;
         }
 
-        LOG_INFO("Interpolated {} total frames", interpolated_cameras.size());
+        int n_with_source_uid = 0;
+        for (const auto& c : interpolated_cameras) {
+            if (c.source_uid >= 0) ++n_with_source_uid;
+        }
+        LOG_INFO("Walkthrough: {} training-pose frames, bilateral_grid={} ({}/{} frames match training uids)",
+                 interpolated_cameras.size(),
+                 bilateral_grid_ ? "attached" : "detached",
+                 n_with_source_uid, interpolated_cameras.size());
 
         // Create temporary directory for frames
         const auto frame_dir = output_path.parent_path() / "_frames_temp";
@@ -424,9 +455,20 @@ namespace lfs::training {
 
             const auto& [output, ctx] = *render_result;
 
-            // Save frame to disk
+            // Pipeline mirrors the training loop (trainer.cpp:1396-1398):
+            //   raw_render -> (bilateral if source_uid valid) -> clamp -> save.
+            // Training cameras get the learned per-image color correction
+            // that the loss was actually pushing toward GT, so frames look
+            // the way the training forward pass sees them. Novel views
+            // (source_uid=-1, e.g. spiral) get the raw render — same as
+            // the eval path — because the bilateral slot would be wrong.
+            lfs::core::Tensor frame_tensor = output.image;
+            if (bilateral_grid_ != nullptr && interp_cam.source_uid >= 0) {
+                frame_tensor = bilateral_grid_->apply(output.image, interp_cam.source_uid);
+            }
+            frame_tensor = frame_tensor.clamp(0.0f, 1.0f);
             const auto frame_path = frame_dir / std::format("frame_{:06d}.png", frame_idx);
-            lfs::core::save_image(frame_path, output.image);
+            lfs::core::save_image(frame_path, frame_tensor);
 
             ++frame_idx;
 
@@ -565,6 +607,71 @@ namespace lfs::training {
 
         result.success = true;
         LOG_INFO("Rotation video saved: {}", result.video_path.string());
+        return result;
+    }
+
+    VideoRenderResult VideoRenderer::render_spiral_video(
+        int iteration,
+        const std::vector<std::shared_ptr<lfs::core::Camera>>& cameras,
+        lfs::core::SplatData& model,
+        lfs::core::Tensor& background,
+        const std::filesystem::path& output_dir,
+        int n_frames,
+        float radius,
+        float revolutions) {
+
+        VideoRenderResult result;
+        result.success = false;
+
+        if (!is_ffmpeg_available()) {
+            result.error_message = "FFmpeg not found - cannot encode video";
+            LOG_ERROR("{}", result.error_message);
+            return result;
+        }
+
+        if (cameras.empty()) {
+            result.error_message = "No cameras provided for spiral video";
+            LOG_WARN("{}", result.error_message);
+            return result;
+        }
+
+        const auto video_dir = output_dir / "videos";
+        std::filesystem::create_directories(video_dir);
+        result.video_path = video_dir / std::format("spiral_iter{:06d}.mp4", iteration);
+
+        LOG_INFO("Rendering spiral video: {} frames, radius={:.3f}, revolutions={:.2f}",
+                 n_frames, radius, revolutions);
+
+        const auto spiral_cameras = generate_spiral_path(
+            cameras, n_frames, radius, revolutions);
+        if (spiral_cameras.empty()) {
+            result.error_message = "Failed to generate spiral camera path";
+            LOG_ERROR("{}", result.error_message);
+            return result;
+        }
+
+        const auto frame_dir = result.video_path.parent_path() / "_spiral_frames_temp";
+        std::filesystem::create_directories(frame_dir);
+
+        const int num_frames = render_frames(spiral_cameras, model, background, frame_dir);
+        if (num_frames <= 0) {
+            result.error_message = "Failed to render spiral video frames";
+            LOG_ERROR("{}", result.error_message);
+            cleanup_frames(frame_dir);
+            return result;
+        }
+        result.num_frames = static_cast<size_t>(num_frames);
+
+        if (!encode_video(frame_dir, result.video_path, num_frames)) {
+            result.error_message = "Failed to encode spiral video with FFmpeg";
+            LOG_ERROR("{}", result.error_message);
+            cleanup_frames(frame_dir);
+            return result;
+        }
+
+        cleanup_frames(frame_dir);
+        result.success = true;
+        LOG_INFO("Spiral video saved: {}", result.video_path.string());
         return result;
     }
 

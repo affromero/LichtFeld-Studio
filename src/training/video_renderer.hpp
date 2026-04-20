@@ -5,6 +5,7 @@
 #pragma once
 
 #include "camera_interpolation.hpp"
+#include "components/bilateral_grid.hpp"
 #include "core/parameters.hpp"
 #include "core/splat_data.hpp"
 #include "core/tensor.hpp"
@@ -19,7 +20,7 @@ namespace lfs::training {
     /// Configuration for video rendering
     struct VideoRenderConfig {
         int fps = 30;               ///< Frames per second for output video
-        int frames_between = 30;    ///< Interpolated frames between keyframe cameras
+        int frames_between = 0;     ///< Interpolated frames between keyframe cameras. 0 = training poses verbatim (training-time PSNR in every frame; no novel-view goop).
         bool loop = false;          ///< Create looping video (return to first camera)
         bool mip_filter = false;    ///< Apply mip filtering during rendering
         int rotation_frames = 120;  ///< Number of frames for rotation video
@@ -80,6 +81,28 @@ namespace lfs::training {
             lfs::core::Tensor& background,
             const std::filesystem::path& output_dir);
 
+        /// Render a spiral walkthrough: walk along the training trajectory
+        /// with a helical offset. Stays in-distribution (frames remain
+        /// close to training poses) so quality degrades gracefully with
+        /// ``radius``; set radius ~5-10% of the inter-frame baseline.
+        /// @param iteration       Current training iteration (used for naming)
+        /// @param cameras         Trajectory spine (usually training cameras)
+        /// @param model           Gaussian splat model
+        /// @param background      Background color tensor [3]
+        /// @param output_dir      Base output directory; saved to output_dir/videos/spiral_iter*.mp4
+        /// @param n_frames        Output frame count
+        /// @param radius          Offset magnitude in scene units
+        /// @param revolutions     Number of spiral turns across the path
+        VideoRenderResult render_spiral_video(
+            int iteration,
+            const std::vector<std::shared_ptr<lfs::core::Camera>>& cameras,
+            lfs::core::SplatData& model,
+            lfs::core::Tensor& background,
+            const std::filesystem::path& output_dir,
+            int n_frames = 180,
+            float radius = 0.01f,        // ~1 cm wobble for meter-scale scenes
+            float revolutions = 3.0f);   // a few gentle laps along the trajectory
+
         /// Capture a training progress frame
         /// @param camera Camera to render from
         /// @param model The Gaussian splat model
@@ -127,6 +150,13 @@ namespace lfs::training {
         /// Update configuration
         void set_config(const VideoRenderConfig& config) { config_ = config; }
 
+        /// Attach the trained bilateral grid so walkthrough frames rendered
+        /// from training-camera poses (InterpolatedCamera::source_uid >= 0)
+        /// get the same per-image color correction that the training loop
+        /// applies at trainer.cpp:1390/1463. Without this, video frames
+        /// understate the reported PSNR by 5-7 dB even at training poses.
+        void set_bilateral_grid(BilateralGrid* bilateral_grid);
+
     private:
         /// Render frames along the interpolated camera path
         /// @param cameras Interpolated camera parameters
@@ -162,6 +192,7 @@ namespace lfs::training {
             int n_frames);
 
         VideoRenderConfig config_;
+        BilateralGrid* bilateral_grid_ = nullptr;         ///< Non-owning; set via set_bilateral_grid() so render_frames can apply it for training-pose frames (source_uid >= 0).
         std::vector<lfs::core::Tensor> training_frames_;  ///< Accumulated training progress frames
         std::vector<int> training_iterations_;             ///< Iteration number for each training frame
     };

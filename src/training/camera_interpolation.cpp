@@ -136,6 +136,30 @@ namespace lfs::training {
             return {interp};
         }
 
+        // frames_between <= 0: emit training poses verbatim (no interpolation).
+        // Every rendered frame is an exact training camera, so every frame
+        // reflects the training-time PSNR — no novel-view extrapolation goop.
+        // ``source_uid`` carries the original camera uid so downstream renderers
+        // can apply per-camera corrections (e.g., bilateral grid).
+        if (frames_between <= 0) {
+            std::vector<InterpolatedCamera> result;
+            result.reserve(cameras.size());
+            for (const auto& cam : cameras) {
+                InterpolatedCamera interp;
+                interp.R = cam->R().to(lfs::core::Device::CPU);
+                interp.T = cam->T().to(lfs::core::Device::CPU);
+                std::tie(interp.focal_x, interp.focal_y, interp.center_x, interp.center_y) =
+                    cam->get_intrinsics();
+                interp.image_width = cam->camera_width();
+                interp.image_height = cam->camera_height();
+                interp.source_uid = cam->uid();
+                result.push_back(std::move(interp));
+            }
+            LOG_DEBUG("frames_between<=0: returning {} training-pose cameras verbatim",
+                      result.size());
+            return result;
+        }
+
         // Pre-extract all camera data for Catmull-Rom spline interpolation
         // IMPORTANT: Use cam_position() for actual camera world position, NOT T()!
         // T() is the view matrix translation, not the camera position.
@@ -234,6 +258,139 @@ namespace lfs::training {
         LOG_DEBUG("Generated {} interpolated camera frames from {} keyframes (Catmull-Rom spline)",
                   result.size(), cameras.size());
 
+        return result;
+    }
+
+    std::vector<InterpolatedCamera> generate_spiral_path(
+        const std::vector<std::shared_ptr<lfs::core::Camera>>& cameras,
+        int n_frames,
+        float radius,
+        float revolutions) {
+
+        if (cameras.empty() || n_frames <= 0) {
+            LOG_WARN("generate_spiral_path: need cameras and n_frames > 0");
+            return {};
+        }
+
+        // Build a chronologically-ordered single-camera spine. LichtFeld
+        // stores the dataset camera-major (all lefts, then fronts, then
+        // rights) so a naive iteration walks the rig laterally, which
+        // turns a "wobble around the trajectory" into "teleport across
+        // the 3-cam rig". Filter to a single physical camera name prefix
+        // and sort by the numeric suffix so we advance along the capture
+        // trajectory.
+        auto extract_frame_idx = [](const std::string& name) -> int {
+            // Strip extension if present
+            const auto dot = name.rfind('.');
+            std::string stem = (dot == std::string::npos) ? name : name.substr(0, dot);
+            // Find last '_' then parse trailing digits
+            const auto underscore = stem.rfind('_');
+            if (underscore == std::string::npos || underscore + 1 >= stem.size()) return 0;
+            try { return std::stoi(stem.substr(underscore + 1)); }
+            catch (...) { return 0; }
+        };
+
+        // Try prefixes in order of preference; fall back to all cameras.
+        static constexpr const char* PREFERRED_PREFIXES[] = {"front_", "cam_", ""};
+        std::vector<std::shared_ptr<lfs::core::Camera>> spine;
+        for (const char* px : PREFERRED_PREFIXES) {
+            spine.clear();
+            for (const auto& c : cameras) {
+                if (!c) continue;
+                const std::string& nm = c->image_name();
+                if (*px == '\0' || nm.rfind(px, 0) == 0) {
+                    spine.push_back(c);
+                }
+            }
+            if (!spine.empty()) break;
+        }
+        // Sort spine by frame index
+        std::sort(spine.begin(), spine.end(),
+                  [&](const std::shared_ptr<lfs::core::Camera>& a,
+                      const std::shared_ptr<lfs::core::Camera>& b) {
+                      return extract_frame_idx(a->image_name()) <
+                             extract_frame_idx(b->image_name());
+                  });
+        if (spine.empty()) spine = cameras;
+
+        LOG_INFO("Spiral: spine has {} cameras (first=\"{}\" last=\"{}\"), {} output frames",
+                 spine.size(),
+                 spine.front()->image_name(),
+                 spine.back()->image_name(),
+                 n_frames);
+
+        std::vector<InterpolatedCamera> result;
+        result.reserve(static_cast<size_t>(n_frames));
+
+        const size_t n_cams = spine.size();
+        const float two_pi = 2.0f * 3.14159265358979323846f;
+
+        // Reference intrinsics + resolution come from the first camera so
+        // every spiral frame uses a consistent image size.
+        float fx0, fy0, cx0, cy0;
+        std::tie(fx0, fy0, cx0, cy0) = spine[0]->get_intrinsics();
+        const int width = spine[0]->camera_width();
+        const int height = spine[0]->camera_height();
+
+        for (int f = 0; f < n_frames; ++f) {
+            // Fractional progress along the trajectory
+            const float t = static_cast<float>(f) / static_cast<float>(std::max(1, n_frames - 1));
+            const size_t base_idx = std::min(n_cams - 1,
+                static_cast<size_t>(t * (n_cams - 1)));
+            const auto& base = spine[base_idx];
+
+            // Base rotation (world -> camera). Reused so frames stay facing the
+            // same direction as the underlying training camera.
+            const auto R_cpu = base->R().to(lfs::core::Device::CPU);
+            // Base camera position in world space.
+            const auto pos = tensor_to_position(
+                base->cam_position().to(lfs::core::Device::CPU));
+
+            // Radial offset in camera-local coords (right, up): circle in the
+            // camera plane. The right/up axes are the first two rows of R^T.
+            const float theta = two_pi * revolutions * t;
+            const float dx = radius * std::cos(theta);   // right
+            const float dy = radius * std::sin(theta);   // up
+
+            const float* r = R_cpu.ptr<float>();
+            // R rows are world-space axes when reading row i: [r[3i], r[3i+1], r[3i+2]]
+            // Camera-right in world = R^T * [1,0,0] = column 0 of R = [r[0], r[3], r[6]]
+            // Camera-up    in world = R^T * [0,-1,0] (image y down) => -column 1 of R
+            const float right_w[3] = {r[0], r[3], r[6]};
+            const float up_w[3] = {-r[1], -r[4], -r[7]};
+
+            std::array<float, 3> new_pos = {
+                pos[0] + dx * right_w[0] + dy * up_w[0],
+                pos[1] + dx * right_w[1] + dy * up_w[1],
+                pos[2] + dx * right_w[2] + dy * up_w[2],
+            };
+
+            InterpolatedCamera interp;
+            interp.R = R_cpu;
+            interp.T = lfs::core::Tensor::empty({3}, lfs::core::Device::CPU);
+            float* t_ptr = interp.T.ptr<float>();
+            // T = -R * new_pos
+            t_ptr[0] = -(r[0] * new_pos[0] + r[1] * new_pos[1] + r[2] * new_pos[2]);
+            t_ptr[1] = -(r[3] * new_pos[0] + r[4] * new_pos[1] + r[5] * new_pos[2]);
+            t_ptr[2] = -(r[6] * new_pos[0] + r[7] * new_pos[1] + r[8] * new_pos[2]);
+
+            interp.focal_x = fx0;
+            interp.focal_y = fy0;
+            interp.center_x = cx0;
+            interp.center_y = cy0;
+            interp.image_width = width;
+            interp.image_height = height;
+            // Inherit the base training camera's uid so bilateral grid
+            // applies the correct per-image color correction. Frames are
+            // only a tiny offset (radius ~cm) from this pose, so the base
+            // bilateral slot remains the right per-image prior and the
+            // output matches what a training-time forward pass looks like.
+            interp.source_uid = base->uid();
+            result.push_back(std::move(interp));
+        }
+
+        LOG_DEBUG("Generated {} spiral frames from {} training cams (radius={:.3f}, revolutions={:.2f})",
+                  result.size(), cameras.size(), radius, revolutions);
         return result;
     }
 

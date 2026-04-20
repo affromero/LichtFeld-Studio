@@ -244,6 +244,12 @@ namespace lfs::training {
                 const auto cli_eval_steps = params.optimization.eval_steps;
                 const auto cli_save_steps = params.optimization.save_steps;
                 const auto cli_reduce_lr = params.optimization.reduce_lr_on_plateau;
+                // Video output knobs are output formatting, not model state — always
+                // honor the live CLI/JSON config over whatever the checkpoint saved.
+                const auto cli_enable_video_export = params.optimization.enable_video_export;
+                const auto cli_video_fps = params.optimization.video_fps;
+                const auto cli_video_frames_between = params.optimization.video_frames_between;
+                const auto cli_video_loop = params.optimization.video_loop;
 
                 const auto params_json = nlohmann::json::parse(params_str);
                 if (params_json.contains("optimization")) {
@@ -269,6 +275,12 @@ namespace lfs::training {
                 // Restore reduce_lr_on_plateau if it was enabled in CLI config
                 if (cli_reduce_lr.enabled)
                     params.optimization.reduce_lr_on_plateau = cli_reduce_lr;
+                // Video output knobs: always restore from CLI/JSON — they're not
+                // model state, so changing them across a resume must take effect.
+                params.optimization.enable_video_export = cli_enable_video_export;
+                params.optimization.video_fps = cli_video_fps;
+                params.optimization.video_frames_between = cli_video_frames_between;
+                params.optimization.video_loop = cli_video_loop;
             }
             strategy.set_optimization_params(params.optimization);
             file.clear();

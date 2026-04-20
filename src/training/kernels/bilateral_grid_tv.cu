@@ -171,7 +171,11 @@ namespace lfs::training::kernels {
                 half_grad += (val - val0) * sz;
             }
 
-            grad_grids[cell_idx] = half_grad;
+            // Accumulate (NOT overwrite) onto accumulated_grads_ so photometric
+            // gradients from bilateral_grid_->backward() survive. Original '='
+            // wiped every per-camera gradient every step -> grid stuck at
+            // identity forever, invisible contribution to final quality.
+            grad_grids[cell_idx] += half_grad;
         }
     }
 

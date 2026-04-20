@@ -545,6 +545,13 @@ namespace lfs::training {
                 }
                 r_output = std::move(rasterize_result->first);
             }
+            // Apply learned per-image color correction (bilateral grid) so the
+            // metric reflects the actual training pipeline. Without this the
+            // eval PSNR hides the bilateral contribution (typically 5-7 dB).
+            if (_bilateral_grid != nullptr && cam->uid() >= 0 &&
+                cam->uid() < _bilateral_grid->num_images()) {
+                r_output.image = _bilateral_grid->apply(r_output.image, cam->uid());
+            }
             r_output.image = r_output.image.clamp(0.0f, 1.0f);
 
             float psnr = 0.0f;

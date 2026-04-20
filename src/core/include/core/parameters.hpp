@@ -148,7 +148,7 @@ namespace lfs::core {
             // Video export parameters (render walkthrough videos at validation steps)
             bool enable_video_export = false;  ///< Enable video rendering at each eval step
             int video_fps = 30;                ///< Frames per second for output video
-            int video_frames_between = 30;     ///< Number of interpolated frames between keyframe cameras
+            int video_frames_between = 0;      ///< Number of interpolated frames between keyframe cameras. 0 = training poses verbatim (no novel-view goop).
             bool video_loop = false;           ///< Create looping video (return to first camera)
 
             std::string config_file = "";

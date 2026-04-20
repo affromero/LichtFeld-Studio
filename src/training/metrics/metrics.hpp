@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "../components/bilateral_grid.hpp"
 #include "../dataset.hpp"
 #include "core/parameters.hpp"
 #include "core/splat_data.hpp"
@@ -150,6 +151,13 @@ namespace lfs::training {
             return _reporter && _reporter->is_new_best_psnr(iteration);
         }
 
+        // Attach trained bilateral grid so eval can apply it to rendered output
+        // (matching training-loop pipeline). Without this, eval measures the
+        // raw render vs GT which understates true quality by 5-7 dB.
+        void set_bilateral_grid(BilateralGrid* bilateral_grid) {
+            _bilateral_grid = bilateral_grid;
+        }
+
     private:
         // Configuration
         const lfs::core::param::TrainingParameters _params;
@@ -158,6 +166,10 @@ namespace lfs::training {
         std::unique_ptr<PSNR> _psnr_metric;
         std::unique_ptr<SSIM> _ssim_metric;
         std::unique_ptr<MetricsReporter> _reporter;
+
+        // Non-owning: set via set_bilateral_grid; applied in evaluate() when
+        // non-null so metrics include the learned per-image color correction.
+        BilateralGrid* _bilateral_grid = nullptr;
 
         // Helper functions
         lfs::core::Tensor load_eval_mask(lfs::core::Camera* cam, lfs::core::Tensor& gt_image,

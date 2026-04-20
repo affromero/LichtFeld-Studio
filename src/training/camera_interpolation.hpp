@@ -142,6 +142,7 @@ namespace lfs::training {
         float center_y;            ///< Principal point Y
         int image_width;           ///< Image width
         int image_height;          ///< Image height
+        int source_uid = -1;       ///< Original camera uid when this frame maps directly to a training camera (frames_between<=0 path); -1 for interpolated frames where the bilateral grid cannot be applied.
 
         /// Create a Camera object from interpolated parameters
         std::unique_ptr<lfs::core::Camera> to_camera(int uid) const;
@@ -156,5 +157,24 @@ namespace lfs::training {
         const std::vector<std::shared_ptr<lfs::core::Camera>>& cameras,
         int frames_between,
         bool loop = false);
+
+    /// Spiral path: walk along the training trajectory, each frame offset
+    /// radially in the camera's local horizontal/vertical plane so the
+    /// output looks like a helical fly-through that stays close to the
+    /// observed views. Orientation matches the base camera at each step,
+    /// so content stays in-distribution. ``source_uid`` is cleared (-1)
+    /// because frames are novel views (bilateral grid not applicable).
+    ///
+    /// @param cameras   Trajectory spine (typically the training cameras)
+    /// @param n_frames  Number of output frames
+    /// @param radius    Offset magnitude in scene units (keep small, e.g.
+    ///                  0.05 x baseline). Too large -> goop beyond training
+    ///                  generalization cone.
+    /// @param revolutions  Number of spiral turns across the full path
+    std::vector<InterpolatedCamera> generate_spiral_path(
+        const std::vector<std::shared_ptr<lfs::core::Camera>>& cameras,
+        int n_frames,
+        float radius,
+        float revolutions);
 
 } // namespace lfs::training
