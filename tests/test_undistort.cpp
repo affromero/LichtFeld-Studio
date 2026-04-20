@@ -5,8 +5,11 @@
 #include "core/cuda/undistort/undistort.hpp"
 #include "core/image_io.hpp"
 #include "io/formats/colmap.hpp"
+#include "training/rasterization/gsplat/Cameras.cuh"
 #include <cuda_runtime.h>
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <cmath>
 
 using namespace lfs::core;
 
@@ -55,6 +58,49 @@ namespace {
         ASSERT_EQ(dst.ndim(), 2u);
         EXPECT_EQ(static_cast<int>(dst.shape()[0]), params.dst_height);
         EXPECT_EQ(static_cast<int>(dst.shape()[1]), params.dst_width);
+    }
+
+    glm::fvec2 project_rational_reference(
+        const glm::fvec3& cam_ray,
+        const std::array<float, 8>& rational_coeffs,
+        const std::array<float, 3>& tangential_coeffs,
+        float fx,
+        float fy,
+        float cx,
+        float cy) {
+        const float xn = cam_ray.x / cam_ray.z;
+        const float yn = cam_ray.y / cam_ray.z;
+        const float r2 = xn * xn + yn * yn;
+        const float r4 = r2 * r2;
+        const float r6 = r4 * r2;
+
+        const float b_num =
+            1.0f + rational_coeffs[0] * r2 +
+            rational_coeffs[1] * r4 +
+            rational_coeffs[2] * r6;
+        const float b_den =
+            1.0f + rational_coeffs[3] * r2 +
+            rational_coeffs[4] * r4 +
+            rational_coeffs[5] * r6;
+        const float safe_den =
+            (b_den < 0.0f ? -1.0f : 1.0f) * std::max(std::fabs(b_den), 1e-12f);
+        const float B = b_num / safe_den;
+        const float A = 1.0f + rational_coeffs[6] * r2 + rational_coeffs[7] * r4;
+        const float p1 = tangential_coeffs[0];
+        const float p2 = tangential_coeffs[1];
+        const float skew = tangential_coeffs[2];
+
+        const float xd =
+            xn * B +
+            A * (p2 * (r2 + 2.0f * xn * xn) + 2.0f * p1 * xn * yn);
+        const float yd =
+            yn * B +
+            A * (p1 * (r2 + 2.0f * yn * yn) + 2.0f * p2 * xn * yn);
+
+        return {
+            fx * xd + skew * yd + cx,
+            fy * yd + cy,
+        };
     }
 
 } // namespace
@@ -166,6 +212,61 @@ TEST(UndistortPacking, ThinPrismFisheye) {
     EXPECT_FLOAT_EQ(params.distortion[6], 0.0001f);  // s1
     EXPECT_FLOAT_EQ(params.distortion[7], -0.0002f); // s2
     EXPECT_EQ(params.num_distortion, 8);
+}
+
+TEST(UndistortPacking, Rational) {
+    auto radial = Tensor::from_vector(
+        {0.11f, -0.03f, 0.004f, 0.02f, -0.005f, 0.0008f, 0.01f, -0.002f},
+        TensorShape({8}), Device::CPU);
+    auto tangential = Tensor::from_vector(
+        {0.0006f, -0.0004f, 0.75f},
+        TensorShape({3}), Device::CPU);
+    auto params = compute_undistort_params(
+        TEST_FX, TEST_FY, TEST_CX, TEST_CY, TEST_W, TEST_H,
+        radial, tangential, CameraModelType::RATIONAL);
+
+    EXPECT_FLOAT_EQ(params.distortion[0], 0.11f);      // b1
+    EXPECT_FLOAT_EQ(params.distortion[1], -0.03f);     // b2
+    EXPECT_FLOAT_EQ(params.distortion[2], 0.004f);     // b3
+    EXPECT_FLOAT_EQ(params.distortion[3], 0.02f);      // d1
+    EXPECT_FLOAT_EQ(params.distortion[4], -0.005f);    // d2
+    EXPECT_FLOAT_EQ(params.distortion[5], 0.0008f);    // d3
+    EXPECT_FLOAT_EQ(params.distortion[6], 0.01f);      // a1
+    EXPECT_FLOAT_EQ(params.distortion[7], -0.002f);    // a2
+    EXPECT_FLOAT_EQ(params.distortion[8], 0.0006f);    // p1
+    EXPECT_FLOAT_EQ(params.distortion[9], -0.0004f);   // p2
+    EXPECT_FLOAT_EQ(params.distortion[10], 0.75f);     // skew
+    EXPECT_EQ(params.num_distortion, 11);
+}
+
+TEST(RationalCameraModel, ForwardProjectionMatchesReference) {
+    RationalCameraModel<>::Parameters params = {};
+    params.resolution = {TEST_W, TEST_H};
+    params.shutter_type = ShutterType::GLOBAL;
+    params.principal_point = {319.5f, 241.25f};
+    params.focal_length = {512.0f, 505.0f};
+    params.rational_coeffs = {
+        0.12f, -0.04f, 0.006f,
+        0.02f, -0.003f, 0.0005f,
+        0.015f, -0.002f};
+    params.tangential_coeffs = {0.0008f, -0.0003f, 0.9f};
+
+    RationalCameraModel<> camera_model(params);
+    const glm::fvec3 cam_ray{0.35f, -0.18f, 1.4f};
+    const auto [image_point, valid] =
+        camera_model.camera_ray_to_image_point(cam_ray, 0.0f);
+    const auto expected = project_rational_reference(
+        cam_ray,
+        params.rational_coeffs,
+        params.tangential_coeffs,
+        params.focal_length[0],
+        params.focal_length[1],
+        params.principal_point[0],
+        params.principal_point[1]);
+
+    EXPECT_TRUE(valid);
+    EXPECT_NEAR(image_point.x, expected.x, 1e-5f);
+    EXPECT_NEAR(image_point.y, expected.y, 1e-5f);
 }
 
 // ====================== Per-model undistortion tests ======================
@@ -318,6 +419,24 @@ TEST(UndistortThinPrism, RadialOnlyNoTangential) {
 
     validate_params(params, TEST_W, TEST_H);
     run_image_undistort(params);
+}
+
+// ====================== Rational model tests ======================
+
+TEST(UndistortRational, FullCoefficients) {
+    auto radial = Tensor::from_vector(
+        {0.11f, -0.03f, 0.004f, 0.02f, -0.005f, 0.0008f, 0.01f, -0.002f},
+        TensorShape({8}), Device::CPU);
+    auto tangential = Tensor::from_vector(
+        {0.0006f, -0.0004f, 0.75f},
+        TensorShape({3}), Device::CPU);
+    auto params = compute_undistort_params(
+        TEST_FX, TEST_FY, TEST_CX, TEST_CY, TEST_W, TEST_H,
+        radial, tangential, CameraModelType::RATIONAL);
+
+    validate_params(params, TEST_W, TEST_H);
+    run_image_undistort(params);
+    run_mask_undistort(params);
 }
 
 // ====================== blank_pixels parameter ======================

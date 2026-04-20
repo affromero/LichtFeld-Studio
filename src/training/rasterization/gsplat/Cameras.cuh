@@ -758,6 +758,230 @@ struct OpenCVPinholeCameraModel
     }
 };
 
+template <size_t N_MAX_UNDISTORTION_ITERATIONS = 20>
+struct RationalCameraModel
+    : BaseCameraModel<RationalCameraModel<N_MAX_UNDISTORTION_ITERATIONS>> {
+    // Rational pinhole camera model with skew in the image-plane projection
+
+    using Base = BaseCameraModel<RationalCameraModel<N_MAX_UNDISTORTION_ITERATIONS>>;
+
+    struct Parameters : Base::Parameters {
+        std::array<float, 2> principal_point;
+        std::array<float, 2> focal_length;
+        std::array<float, 8> rational_coeffs = {0.f};   // b1,b2,b3,d1,d2,d3,a1,a2
+        std::array<float, 3> tangential_coeffs = {0.f}; // p1,p2,skew
+    };
+
+    __host__ __device__ RationalCameraModel(
+        Parameters const& parameters,
+        float stop_undistortion_error = 1e-6f)
+        : parameters(parameters),
+          stop_undistortion_error(stop_undistortion_error) {}
+
+    Parameters parameters;
+    float stop_undistortion_error;
+
+    struct DistortionTerms {
+        float B;
+        float A;
+        float tx;
+        float ty;
+        float safe_denominator;
+        float dsafe_denominator_dr;
+    };
+
+    inline __host__ __device__ auto compute_distortion_terms(
+        float x, float y) const -> DistortionTerms {
+        auto const& [b1, b2, b3, d1, d2, d3, a1, a2] = parameters.rational_coeffs;
+        auto const& [p1, p2, skew] = parameters.tangential_coeffs;
+        (void)skew;
+
+        const float r = x * x + y * y;
+        const float r2 = r * r;
+        const float r3 = r2 * r;
+
+        const float numerator = 1.0f + b1 * r + b2 * r2 + b3 * r3;
+        const float denominator = 1.0f + d1 * r + d2 * r2 + d3 * r3;
+        const float denominator_abs = fabsf(denominator);
+        const float denominator_sign = denominator < 0.0f ? -1.0f : 1.0f;
+        const float safe_denominator =
+            denominator_sign * fmaxf(denominator_abs, 1e-12f);
+
+        const float numerator_r = b1 + 2.0f * b2 * r + 3.0f * b3 * r2;
+        const float denominator_r = d1 + 2.0f * d2 * r + 3.0f * d3 * r2;
+        const float dsafe_denominator_dr =
+            denominator_abs >= 1e-12f ? denominator_r : 0.0f;
+
+        const float B = numerator / safe_denominator;
+        const float A = 1.0f + a1 * r + a2 * r2;
+
+        const float tx = p2 * (r + 2.0f * x * x) + 2.0f * p1 * x * y;
+        const float ty = p1 * (r + 2.0f * y * y) + 2.0f * p2 * x * y;
+
+        return {B, A, tx, ty, safe_denominator, dsafe_denominator_dr};
+    }
+
+    inline __host__ __device__ auto camera_ray_to_image_point(
+        glm::fvec3 const& cam_ray, float margin_factor) const -> typename Base::ImagePointReturn {
+        if (cam_ray.z <= 0.f) {
+            return {{0.f, 0.f}, false};
+        }
+
+        const auto uv = glm::fvec2(cam_ray.x, cam_ray.y) / cam_ray.z;
+        const auto [B, A, tx, ty, safe_denominator, dsafe_denominator_dr] =
+            compute_distortion_terms(uv.x, uv.y);
+        (void)safe_denominator;
+        (void)dsafe_denominator_dr;
+
+        if (!isfinite(B) || !isfinite(A) || B <= 0.0f) {
+            return {{0.f, 0.f}, false};
+        }
+
+        const float xd = uv.x * B + A * tx;
+        const float yd = uv.y * B + A * ty;
+        const float skew = parameters.tangential_coeffs[2];
+
+        const auto image_point = glm::fvec2{
+            parameters.focal_length[0] * xd +
+                skew * yd + parameters.principal_point[0],
+            parameters.focal_length[1] * yd +
+                parameters.principal_point[1]};
+
+        auto valid = isfinite(image_point.x) && isfinite(image_point.y);
+        valid &= image_point_in_image_bounds_margin(
+            image_point, parameters.resolution, margin_factor);
+
+        return {image_point, valid};
+    }
+
+    struct JacobianReturn {
+        float fx, fy, fx_x, fx_y, fy_x, fy_y;
+        bool valid_flag;
+    };
+
+    inline __host__ __device__ auto compute_residual_and_jacobian(
+        float x, float y, float xd_target, float yd_target) const -> JacobianReturn {
+        auto const& [b1, b2, b3, d1, d2, d3, a1, a2] = parameters.rational_coeffs;
+        auto const& [p1, p2, skew] = parameters.tangential_coeffs;
+        (void)skew;
+
+        const float r = x * x + y * y;
+        const float r2 = r * r;
+        const float r3 = r2 * r;
+
+        const float numerator = 1.0f + b1 * r + b2 * r2 + b3 * r3;
+        const float denominator = 1.0f + d1 * r + d2 * r2 + d3 * r3;
+        const float denominator_abs = fabsf(denominator);
+        const float denominator_sign = denominator < 0.0f ? -1.0f : 1.0f;
+        const float safe_denominator =
+            denominator_sign * fmaxf(denominator_abs, 1e-12f);
+        const float numerator_r = b1 + 2.0f * b2 * r + 3.0f * b3 * r2;
+        const float denominator_r = d1 + 2.0f * d2 * r + 3.0f * d3 * r2;
+        const float dsafe_denominator_dr =
+            denominator_abs >= 1e-12f ? denominator_r : 0.0f;
+        const float B = numerator / safe_denominator;
+
+        if (!isfinite(B) || B <= 0.0f) {
+            return {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, false};
+        }
+
+        const float B_r =
+            (numerator_r * safe_denominator -
+             numerator * dsafe_denominator_dr) /
+            (safe_denominator * safe_denominator);
+
+        const float A = 1.0f + a1 * r + a2 * r2;
+        const float A_r = a1 + 2.0f * a2 * r;
+
+        const float tx = p2 * (r + 2.0f * x * x) + 2.0f * p1 * x * y;
+        const float ty = p1 * (r + 2.0f * y * y) + 2.0f * p2 * x * y;
+
+        const float B_x = 2.0f * x * B_r;
+        const float B_y = 2.0f * y * B_r;
+        const float A_x = 2.0f * x * A_r;
+        const float A_y = 2.0f * y * A_r;
+
+        const float tx_x = 6.0f * p2 * x + 2.0f * p1 * y;
+        const float tx_y = 2.0f * p2 * y + 2.0f * p1 * x;
+        const float ty_x = 2.0f * p1 * x + 2.0f * p2 * y;
+        const float ty_y = 6.0f * p1 * y + 2.0f * p2 * x;
+
+        const float fx = x * B + A * tx - xd_target;
+        const float fy = y * B + A * ty - yd_target;
+
+        const float fx_x = B + x * B_x + A_x * tx + A * tx_x;
+        const float fx_y = x * B_y + A_y * tx + A * tx_y;
+        const float fy_x = y * B_x + A_x * ty + A * ty_x;
+        const float fy_y = B + y * B_y + A_y * ty + A * ty_y;
+
+        if (!isfinite(fx) || !isfinite(fy) ||
+            !isfinite(fx_x) || !isfinite(fx_y) ||
+            !isfinite(fy_x) || !isfinite(fy_y)) {
+            return {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, false};
+        }
+
+        return {fx, fy, fx_x, fx_y, fy_x, fy_y, true};
+    }
+
+    inline __host__ __device__ glm::fvec2 compute_undistortion_newton(
+        glm::fvec2 const& image_point, bool& converged) const {
+        const float skew = parameters.tangential_coeffs[2];
+        const float yd_target =
+            (image_point.y - parameters.principal_point[1]) /
+            parameters.focal_length[1];
+        const float xd_target =
+            (image_point.x - parameters.principal_point[0] -
+             skew * yd_target) /
+            parameters.focal_length[0];
+
+        float x = xd_target;
+        float y = yd_target;
+        converged = false;
+
+        for (size_t iter = 0; iter < N_MAX_UNDISTORTION_ITERATIONS; ++iter) {
+            const auto [fx, fy, fx_x, fx_y, fy_x, fy_y, valid] =
+                compute_residual_and_jacobian(x, y, xd_target, yd_target);
+            if (!valid) {
+                break;
+            }
+
+            const float det = fx_y * fy_x - fx_x * fy_y;
+            if (fabsf(det) < 1e-8f) {
+                break;
+            }
+
+            const float dx = (fx * fy_y - fy * fx_y) / det;
+            const float dy = (fy * fx_x - fx * fy_x) / det;
+            x += dx;
+            y += dy;
+
+            if (!isfinite(x) || !isfinite(y)) {
+                break;
+            }
+
+            if (fabsf(dx) < stop_undistortion_error &&
+                fabsf(dy) < stop_undistortion_error) {
+                converged = true;
+                break;
+            }
+        }
+
+        return {x, y};
+    }
+
+    inline __host__ __device__ CameraRay image_point_to_camera_ray(
+        glm::fvec2 image_point) const {
+        bool converged = false;
+        const auto uv = compute_undistortion_newton(image_point, converged);
+        if (!converged || !isfinite(uv.x) || !isfinite(uv.y)) {
+            return {glm::fvec3{0.f, 0.f, 1.f}, false};
+        }
+
+        const auto camera_ray = glm::fvec3{uv.x, uv.y, 1.f};
+        return {camera_ray / length(camera_ray), true};
+    }
+};
+
 #define PI 3.14159265358979323846f
 
 // solve 1 + ax + bx^2 + cx^3 = 0
@@ -846,11 +1070,11 @@ struct OpenCVFisheyeCameraModel
         dforward_poly_even = {1, 3 * k1, 5 * k2, 7 * k3, 9 * k4};
 
         auto const max_diag_x =
-            max(parameters.resolution[0] - parameters.principal_point[0],
-                parameters.principal_point[0]);
+            std::max(parameters.resolution[0] - parameters.principal_point[0],
+                     parameters.principal_point[0]);
         auto const max_diag_y =
-            max(parameters.resolution[1] - parameters.principal_point[1],
-                parameters.principal_point[1]);
+            std::max(parameters.resolution[1] - parameters.principal_point[1],
+                     parameters.principal_point[1]);
         auto const max_radius_pixels =
             std::sqrt(max_diag_x * max_diag_x + max_diag_y * max_diag_y);
 
@@ -875,9 +1099,9 @@ struct OpenCVFisheyeCameraModel
         }
 
         max_angle =
-            min(max_angle,
-                max(max_radius_pixels / parameters.focal_length[0],
-                    max_radius_pixels / parameters.focal_length[1]));
+            std::min(max_angle,
+                     std::max(max_radius_pixels / parameters.focal_length[0],
+                              max_radius_pixels / parameters.focal_length[1]));
 
         // approximate backward poly (mapping normalized distances to angles)
         // *very crudely* by linear interpolation / equidistant angle model
@@ -1062,11 +1286,11 @@ struct ThinPrismFisheyeCameraModel
         dforward_poly_even = {1, 3 * k1, 5 * k2, 7 * k3, 9 * k4};
 
         auto const max_diag_x =
-            max(parameters.resolution[0] - parameters.principal_point[0],
-                parameters.principal_point[0]);
+            std::max(parameters.resolution[0] - parameters.principal_point[0],
+                     parameters.principal_point[0]);
         auto const max_diag_y =
-            max(parameters.resolution[1] - parameters.principal_point[1],
-                parameters.principal_point[1]);
+            std::max(parameters.resolution[1] - parameters.principal_point[1],
+                     parameters.principal_point[1]);
         auto const max_radius_pixels =
             std::sqrt(max_diag_x * max_diag_x + max_diag_y * max_diag_y);
 
@@ -1087,9 +1311,9 @@ struct ThinPrismFisheyeCameraModel
             }
         }
 
-        max_angle = min(max_angle,
-                        max(max_radius_pixels / parameters.focal_length[0],
-                            max_radius_pixels / parameters.focal_length[1]));
+        max_angle = std::min(max_angle,
+                             std::max(max_radius_pixels / parameters.focal_length[0],
+                                      max_radius_pixels / parameters.focal_length[1]));
 
         auto const max_normalized_dist = std::max(
             parameters.resolution[0] / 2.f / parameters.focal_length[0],

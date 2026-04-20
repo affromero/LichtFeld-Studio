@@ -322,6 +322,12 @@ namespace lfs::rendering {
         const int sh_degree = resolve_render_sh_degree(model, sh_degree_override);
 
         const auto& w2c = camera.world_view_transform();
+        const auto to_cuda_contiguous = [](Tensor tensor) -> Tensor {
+            if (tensor.device() != lfs::core::Device::CUDA) {
+                tensor = tensor.cuda();
+            }
+            return tensor.is_contiguous() ? tensor : tensor.contiguous();
+        };
 
         // Equirectangular uses image dimensions in K; pinhole uses focal lengths
         const std::vector<float> K_data = (camera_model == GutCameraModel::EQUIRECTANGULAR)
@@ -333,6 +339,59 @@ namespace lfs::rendering {
                                                                    0.0f, 0.0f, 1.0f};
         const Tensor K = Tensor::from_vector(K_data, {3, 3}, lfs::core::Device::CPU).cuda();
 
+        const auto radial_dist = camera.radial_distortion();
+        const auto tangential_dist = camera.tangential_distortion();
+        Tensor radial_cuda;
+        Tensor tangential_cuda;
+        const Tensor* radial_tensor = nullptr;
+        const Tensor* tangential_tensor = nullptr;
+
+        switch (camera_model) {
+        case GutCameraModel::FISHEYE:
+            if (radial_dist.is_valid() && radial_dist.numel() > 0) {
+                radial_cuda = to_cuda_contiguous(
+                    radial_dist.numel() == 4
+                        ? radial_dist
+                        : radial_dist.slice(0, 0, std::min(radial_dist.numel(), size_t(4))));
+                radial_tensor = &radial_cuda;
+            }
+            break;
+        case GutCameraModel::RATIONAL:
+            if (radial_dist.is_valid() && radial_dist.numel() > 0) {
+                radial_cuda = to_cuda_contiguous(
+                    radial_dist.numel() == 8
+                        ? radial_dist
+                        : radial_dist.slice(0, 0, std::min(radial_dist.numel(), size_t(8))));
+                radial_tensor = &radial_cuda;
+            }
+            if (tangential_dist.is_valid() && tangential_dist.numel() > 0) {
+                tangential_cuda = to_cuda_contiguous(
+                    tangential_dist.numel() == 3
+                        ? tangential_dist
+                        : tangential_dist.slice(0, 0, std::min(tangential_dist.numel(), size_t(3))));
+                tangential_tensor = &tangential_cuda;
+            }
+            break;
+        case GutCameraModel::PINHOLE:
+            if (radial_dist.is_valid() && radial_dist.numel() > 0) {
+                radial_cuda = to_cuda_contiguous(
+                    radial_dist.numel() == 6
+                        ? radial_dist
+                        : radial_dist.slice(0, 0, std::min(radial_dist.numel(), size_t(6))));
+                radial_tensor = &radial_cuda;
+            }
+            if (tangential_dist.is_valid() && tangential_dist.numel() > 0) {
+                tangential_cuda = to_cuda_contiguous(
+                    tangential_dist.numel() == 2
+                        ? tangential_dist
+                        : tangential_dist.slice(0, 0, std::min(tangential_dist.numel(), size_t(2))));
+                tangential_tensor = &tangential_cuda;
+            }
+            break;
+        default:
+            break;
+        }
+
         auto [image, alpha, depth] = forward_gut_tensor(
             model.means_raw(),
             model.scaling_raw(),
@@ -343,7 +402,7 @@ namespace lfs::rendering {
             w2c, K,
             sh_degree, width, height,
             camera_model,
-            nullptr, nullptr, transparent_background ? nullptr : &bg_color,
+            radial_tensor, tangential_tensor, transparent_background ? nullptr : &bg_color,
             model_transforms,
             transform_indices, node_visibility_mask);
 

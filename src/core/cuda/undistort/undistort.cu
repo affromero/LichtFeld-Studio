@@ -24,6 +24,23 @@ namespace lfs::core {
         constexpr int MAX_NEWTON_ITERATIONS = 20;
         constexpr float COLMAP_MIN_SCALE = 0.2f;
         constexpr float COLMAP_MAX_SCALE = 2.0f;
+        constexpr float MIN_RATIONAL_DENOMINATOR = 1e-12f;
+
+        inline __host__ __device__ float guard_signed_denominator(
+            const float denominator) {
+            const float sign = denominator < 0.0f ? -1.0f : 1.0f;
+            return sign * fmaxf(fabsf(denominator), MIN_RATIONAL_DENOMINATOR);
+        }
+
+        inline __host__ __device__ float rational_skew(
+            const CameraModelType model,
+            const float* __restrict__ dist,
+            const int num_dist) {
+            if (model != CameraModelType::RATIONAL || num_dist <= 10) {
+                return 0.0f;
+            }
+            return dist[10];
+        }
 
         // COLMAP sensor/models.h (BSD-3 licensed formulas)
         __device__ void apply_distortion_pinhole(
@@ -125,6 +142,35 @@ namespace lfs::core {
             dy = yd;
         }
 
+        __device__ void apply_distortion_rational(
+            const float x, const float y,
+            const float* __restrict__ dist, const int num_dist,
+            float& dx, float& dy) {
+
+            const float r2 = x * x + y * y;
+            const float r4 = r2 * r2;
+            const float r6 = r4 * r2;
+
+            const float b1 = num_dist > 0 ? dist[0] : 0.0f;
+            const float b2 = num_dist > 1 ? dist[1] : 0.0f;
+            const float b3 = num_dist > 2 ? dist[2] : 0.0f;
+            const float d1 = num_dist > 3 ? dist[3] : 0.0f;
+            const float d2 = num_dist > 4 ? dist[4] : 0.0f;
+            const float d3 = num_dist > 5 ? dist[5] : 0.0f;
+            const float a1 = num_dist > 6 ? dist[6] : 0.0f;
+            const float a2 = num_dist > 7 ? dist[7] : 0.0f;
+            const float p1 = num_dist > 8 ? dist[8] : 0.0f;
+            const float p2 = num_dist > 9 ? dist[9] : 0.0f;
+
+            const float b_num = 1.0f + b1 * r2 + b2 * r4 + b3 * r6;
+            const float b_den = 1.0f + d1 * r2 + d2 * r4 + d3 * r6;
+            const float B = b_num / guard_signed_denominator(b_den);
+            const float A = 1.0f + a1 * r2 + a2 * r4;
+
+            dx = x * B + A * (p2 * (r2 + 2.0f * x * x) + 2.0f * p1 * x * y);
+            dy = y * B + A * (p1 * (r2 + 2.0f * y * y) + 2.0f * p2 * x * y);
+        }
+
         __device__ void apply_distortion(
             const float x, const float y,
             const CameraModelType model,
@@ -140,6 +186,9 @@ namespace lfs::core {
                 break;
             case CameraModelType::THIN_PRISM_FISHEYE:
                 apply_distortion_thin_prism_fisheye(x, y, dist, num_dist, dx, dy);
+                break;
+            case CameraModelType::RATIONAL:
+                apply_distortion_rational(x, y, dist, num_dist, dx, dy);
                 break;
             default:
                 dx = x;
@@ -200,7 +249,9 @@ namespace lfs::core {
             float dnx, dny;
             apply_distortion(nx, ny, params.model_type, params.distortion, params.num_distortion, dnx, dny);
 
-            const float sx = dnx * params.src_fx + params.src_cx - PIXEL_CENTER_OFFSET;
+            const float src_skew =
+                rational_skew(params.model_type, params.distortion, params.num_distortion);
+            const float sx = dnx * params.src_fx + src_skew * dny + params.src_cx - PIXEL_CENTER_OFFSET;
             const float sy = dny * params.src_fy + params.src_cy - PIXEL_CENTER_OFFSET;
 
             const int src_plane = params.src_height * params.src_width;
@@ -232,7 +283,9 @@ namespace lfs::core {
             float dnx, dny;
             apply_distortion(nx, ny, params.model_type, params.distortion, params.num_distortion, dnx, dny);
 
-            const float sx = dnx * params.src_fx + params.src_cx - PIXEL_CENTER_OFFSET;
+            const float src_skew =
+                rational_skew(params.model_type, params.distortion, params.num_distortion);
+            const float sx = dnx * params.src_fx + src_skew * dny + params.src_cx - PIXEL_CENTER_OFFSET;
             const float sy = dny * params.src_fy + params.src_cy - PIXEL_CENTER_OFFSET;
 
             dst[oy * params.dst_width + ox] =
@@ -312,6 +365,28 @@ namespace lfs::core {
                 yd += s3 * r2d + s4 * r4d;
                 dx = xd;
                 dy = yd;
+                break;
+            }
+            case CameraModelType::RATIONAL: {
+                const float r2 = x * x + y * y;
+                const float r4 = r2 * r2;
+                const float r6 = r4 * r2;
+                const float b1 = num_dist > 0 ? dist[0] : 0.0f;
+                const float b2 = num_dist > 1 ? dist[1] : 0.0f;
+                const float b3 = num_dist > 2 ? dist[2] : 0.0f;
+                const float d1 = num_dist > 3 ? dist[3] : 0.0f;
+                const float d2 = num_dist > 4 ? dist[4] : 0.0f;
+                const float d3 = num_dist > 5 ? dist[5] : 0.0f;
+                const float a1 = num_dist > 6 ? dist[6] : 0.0f;
+                const float a2 = num_dist > 7 ? dist[7] : 0.0f;
+                const float p1 = num_dist > 8 ? dist[8] : 0.0f;
+                const float p2 = num_dist > 9 ? dist[9] : 0.0f;
+                const float b_num = 1.0f + b1 * r2 + b2 * r4 + b3 * r6;
+                const float b_den = 1.0f + d1 * r2 + d2 * r4 + d3 * r6;
+                const float B = b_num / guard_signed_denominator(b_den);
+                const float A = 1.0f + a1 * r2 + a2 * r4;
+                dx = x * B + A * (p2 * (r2 + 2.0f * x * x) + 2.0f * p1 * x * y);
+                dy = y * B + A * (p1 * (r2 + 2.0f * y * y) + 2.0f * p2 * x * y);
                 break;
             }
             default:
@@ -491,6 +566,61 @@ namespace lfs::core {
             return std::isfinite(ux) && std::isfinite(uy);
         }
 
+        bool cam_from_img_rational_cpu(
+            const float img_x, const float img_y,
+            const float fx, const float fy,
+            const float cx, const float cy,
+            const float* dist, const int num_dist,
+            float& ux, float& uy) {
+
+            const float yd = (img_y - cy) / fy;
+            const float xd =
+                ((img_x - cx) - rational_skew(CameraModelType::RATIONAL, dist, num_dist) * yd) / fx;
+            ux = xd;
+            uy = yd;
+
+            for (int iter = 0; iter < MAX_NEWTON_ITERATIONS; ++iter) {
+                float fx_eval, fy_eval;
+                apply_distortion_cpu(ux, uy, CameraModelType::RATIONAL, dist, num_dist, fx_eval, fy_eval);
+
+                const float residual_x = fx_eval - xd;
+                const float residual_y = fy_eval - yd;
+                if (std::fabs(residual_x) < NEWTON_EPSILON &&
+                    std::fabs(residual_y) < NEWTON_EPSILON) {
+                    return std::isfinite(ux) && std::isfinite(uy);
+                }
+
+                constexpr float jacobian_step = 1e-4f;
+                float fx_dx, fy_dx;
+                float fx_dy, fy_dy;
+                apply_distortion_cpu(
+                    ux + jacobian_step, uy, CameraModelType::RATIONAL, dist, num_dist, fx_dx, fy_dx);
+                apply_distortion_cpu(
+                    ux, uy + jacobian_step, CameraModelType::RATIONAL, dist, num_dist, fx_dy, fy_dy);
+
+                const float j00 = (fx_dx - fx_eval) / jacobian_step;
+                const float j10 = (fy_dx - fy_eval) / jacobian_step;
+                const float j01 = (fx_dy - fx_eval) / jacobian_step;
+                const float j11 = (fy_dy - fy_eval) / jacobian_step;
+
+                const float det = j00 * j11 - j01 * j10;
+                if (std::fabs(det) < NEWTON_EPSILON) {
+                    return false;
+                }
+
+                const float step_x = (j11 * residual_x - j01 * residual_y) / det;
+                const float step_y = (-j10 * residual_x + j00 * residual_y) / det;
+                ux -= step_x;
+                uy -= step_y;
+
+                if (std::fabs(step_x) < NEWTON_EPSILON && std::fabs(step_y) < NEWTON_EPSILON) {
+                    return std::isfinite(ux) && std::isfinite(uy);
+                }
+            }
+
+            return std::isfinite(ux) && std::isfinite(uy);
+        }
+
         bool cam_from_img_cpu(
             const float img_x, const float img_y,
             const float fx, const float fy,
@@ -506,6 +636,8 @@ namespace lfs::core {
                 return cam_from_img_fisheye_cpu(img_x, img_y, fx, fy, cx, cy, dist, num_dist, ux, uy);
             case CameraModelType::THIN_PRISM_FISHEYE:
                 return cam_from_img_generic_cpu(img_x, img_y, fx, fy, cx, cy, model, dist, num_dist, ux, uy);
+            case CameraModelType::RATIONAL:
+                return cam_from_img_rational_cpu(img_x, img_y, fx, fy, cx, cy, dist, num_dist, ux, uy);
             default:
                 ux = (img_x - cx) / fx;
                 uy = (img_y - cy) / fy;
@@ -531,9 +663,11 @@ namespace lfs::core {
         params.model_type = model;
 
         // Coefficient layout per model:
-        // PINHOLE:            [k1, k2, k3, p1, p2]               indices 0-4
-        // FISHEYE:            [k1, k2, k3, k4]                   indices 0-3
-        // THIN_PRISM_FISHEYE: [k1, k2, k3, k4, p1, p2, s1..s4]  indices 0-9
+        // PINHOLE:            [k1, k2, k3, p1, p2]                    indices 0-4
+        // FISHEYE:            [k1, k2, k3, k4]                        indices 0-3
+        // THIN_PRISM_FISHEYE: [k1, k2, k3, k4, p1, p2, s1..s4]       indices 0-9
+        // RATIONAL:           [b1, b2, b3, d1, d2, d3, a1, a2,
+        //                      p1, p2, skew]                          indices 0-10
         std::memset(params.distortion, 0, sizeof(params.distortion));
         params.num_distortion = 0;
 
@@ -575,6 +709,13 @@ namespace lfs::core {
                 place(static_cast<int>(i), rad_vec[i]);
             for (size_t i = 0; i < tan_vec.size() && i < 6; ++i)
                 place(4 + static_cast<int>(i), tan_vec[i]);
+            break;
+
+        case CameraModelType::RATIONAL:
+            for (size_t i = 0; i < rad_vec.size() && i < 8; ++i)
+                place(static_cast<int>(i), rad_vec[i]);
+            for (size_t i = 0; i < tan_vec.size() && i < 3; ++i)
+                place(8 + static_cast<int>(i), tan_vec[i]);
             break;
 
         default:
@@ -769,6 +910,9 @@ namespace lfs::core {
         scaled.src_fy = params.src_fy * sy;
         scaled.src_cx = params.src_cx * sx;
         scaled.src_cy = params.src_cy * sy;
+        if (scaled.model_type == CameraModelType::RATIONAL && scaled.num_distortion > 10) {
+            scaled.distortion[10] = params.distortion[10] * sx;
+        }
         scaled.src_width = actual_src_width;
         scaled.src_height = actual_src_height;
 

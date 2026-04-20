@@ -7,6 +7,7 @@
 #include "core/logger.hpp"
 #include "gsplat/Ops.h"
 #include "training/kernels/grad_alpha.hpp"
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cuda_runtime.h>
@@ -171,6 +172,20 @@ namespace lfs::training {
                 if (radial_dist.is_valid() && radial_dist.numel() >= 4) {
                     radial_cuda = to_cuda_contiguous(radial_dist.numel() == 4 ? radial_dist : radial_dist.slice(0, 0, 4));
                     radial_ptr = radial_cuda.ptr<float>();
+                }
+                break;
+            case CameraModelType::RATIONAL:
+                if (radial_dist.is_valid() && radial_dist.numel() > 0) {
+                    radial_cuda = to_cuda_contiguous(
+                        radial_dist.numel() == 8
+                            ? radial_dist
+                            : radial_dist.slice(0, 0, std::min(radial_dist.numel(), size_t(8))));
+                    radial_ptr = radial_cuda.ptr<float>();
+                }
+                if (tangential_dist.is_valid() && tangential_dist.numel() >= 3) {
+                    tangential_cuda = to_cuda_contiguous(
+                        tangential_dist.numel() == 3 ? tangential_dist : tangential_dist.slice(0, 0, 3));
+                    tangential_ptr = tangential_cuda.ptr<float>();
                 }
                 break;
             case CameraModelType::PINHOLE:
