@@ -187,6 +187,22 @@ namespace gsplat_lfs {
             }
             ThinPrismFisheyeCameraModel camera_model(cm_params);
             ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
+        } else if (camera_model_type == CameraModelType::RATIONAL) {
+            RationalCameraModel<>::Parameters cm_params = {};
+            cm_params.resolution = {image_width, image_height};
+            cm_params.shutter_type = rs_type;
+            cm_params.principal_point = {principal_point.x, principal_point.y};
+            cm_params.focal_length = {focal_length.x, focal_length.y};
+            if (radial_coeffs != nullptr) {
+                cm_params.rational_coeffs =
+                    make_array<float, 8>(radial_coeffs + cid * 8);
+            }
+            if (tangential_coeffs != nullptr) {
+                cm_params.tangential_coeffs =
+                    make_array<float, 3>(tangential_coeffs + cid * 3);
+            }
+            RationalCameraModel camera_model(cm_params);
+            ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
         } else {
             // should never reach here
             assert(false);

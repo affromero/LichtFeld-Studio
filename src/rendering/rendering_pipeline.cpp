@@ -62,6 +62,24 @@ namespace lfs::rendering {
                                                       const size_t gaussian_count) {
             return tensor == nullptr || !tensor->is_valid() || tensor->numel() == gaussian_count;
         }
+
+        GutCameraModel resolve_gut_camera_model(
+            const lfs::core::Camera& cam,
+            bool force_equirectangular) {
+            if (force_equirectangular ||
+                cam.camera_model_type() == lfs::core::CameraModelType::EQUIRECTANGULAR) {
+                return GutCameraModel::EQUIRECTANGULAR;
+            }
+
+            switch (cam.camera_model_type()) {
+            case lfs::core::CameraModelType::FISHEYE:
+                return GutCameraModel::FISHEYE;
+            case lfs::core::CameraModelType::RATIONAL:
+                return GutCameraModel::RATIONAL;
+            default:
+                return GutCameraModel::PINHOLE;
+            }
+        }
     } // namespace
 
     RenderingPipeline::RenderingPipeline()
@@ -458,9 +476,8 @@ namespace lfs::rendering {
             ImageRenderResult result;
 
             if (request.gut || request.equirectangular) {
-                const auto camera_model = request.equirectangular
-                                              ? GutCameraModel::EQUIRECTANGULAR
-                                              : GutCameraModel::PINHOLE;
+                const auto camera_model =
+                    resolve_gut_camera_model(cam, request.equirectangular);
                 auto render_output = gut_rasterize_tensor(
                     cam, model, background_, effective_sh_degree, request.scaling_modifier, camera_model,
                     model_transforms_tensor.get(), transform_indices_ptr, request.node_visibility_mask,

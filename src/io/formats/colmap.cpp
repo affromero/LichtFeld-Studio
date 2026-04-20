@@ -135,7 +135,8 @@ namespace lfs::io {
         SIMPLE_RADIAL_FISHEYE = 8,
         RADIAL_FISHEYE = 9,
         THIN_PRISM_FISHEYE = 10,
-        UNDEFINED = 11
+        RATIONAL = 11,
+        UNDEFINED = 12
     };
 
     static const std::unordered_map<int, std::pair<CAMERA_MODEL, int32_t>> camera_model_ids = {
@@ -150,7 +151,8 @@ namespace lfs::io {
         {8, {CAMERA_MODEL::SIMPLE_RADIAL_FISHEYE, 4}},
         {9, {CAMERA_MODEL::RADIAL_FISHEYE, 5}},
         {10, {CAMERA_MODEL::THIN_PRISM_FISHEYE, 12}},
-        {11, {CAMERA_MODEL::UNDEFINED, -1}}};
+        {11, {CAMERA_MODEL::RATIONAL, 15}},
+        {12, {CAMERA_MODEL::UNDEFINED, -1}}};
 
     static const std::unordered_map<std::string, CAMERA_MODEL> camera_model_names = {
         {"SIMPLE_PINHOLE", CAMERA_MODEL::SIMPLE_PINHOLE},
@@ -163,7 +165,8 @@ namespace lfs::io {
         {"FOV", CAMERA_MODEL::FOV},
         {"SIMPLE_RADIAL_FISHEYE", CAMERA_MODEL::SIMPLE_RADIAL_FISHEYE},
         {"RADIAL_FISHEYE", CAMERA_MODEL::RADIAL_FISHEYE},
-        {"THIN_PRISM_FISHEYE", CAMERA_MODEL::THIN_PRISM_FISHEYE}};
+        {"THIN_PRISM_FISHEYE", CAMERA_MODEL::THIN_PRISM_FISHEYE},
+        {"RATIONAL", CAMERA_MODEL::RATIONAL}};
 
     constexpr float DISTORTION_ZERO_EPSILON = 1e-8f;
 
@@ -453,6 +456,13 @@ namespace lfs::io {
             break;
 
         case CAMERA_MODEL::THIN_PRISM_FISHEYE:
+            params[0] /= factor; // fx
+            params[1] /= factor; // fy
+            params[2] /= factor; // cx
+            params[3] /= factor; // cy
+            break;
+
+        case CAMERA_MODEL::RATIONAL:
             params[0] /= factor; // fx
             params[1] /= factor; // fy
             params[2] /= factor; // cx
@@ -1059,6 +1069,22 @@ namespace lfs::io {
                 camera_model_type = lfs::core::CameraModelType::THIN_PRISM_FISHEYE;
                 break;
 
+            case CAMERA_MODEL::RATIONAL:
+                // fx, fy, cx, cy, b1, b2, b3, d1, d2, d3, a1, a2, p1, p2, skew
+                focal_x = params[0];
+                focal_y = params[1];
+                center_x = params[2];
+                center_y = params[3];
+                radial_dist = Tensor::from_vector(
+                    {params[4], params[5], params[6], params[7],
+                     params[8], params[9], params[10], params[11]},
+                    {8}, Device::CPU);
+                tangential_dist = Tensor::from_vector(
+                    {params[12], params[13], params[14]},
+                    {3}, Device::CPU);
+                camera_model_type = lfs::core::CameraModelType::RATIONAL;
+                break;
+
             case CAMERA_MODEL::FOV:
                 return make_error(ErrorCode::UNSUPPORTED_FORMAT,
                                   std::format("FOV camera model not supported for image '{}'", img.name),
@@ -1411,6 +1437,21 @@ namespace lfs::io {
                 radial_dist = Tensor::from_vector({params[4], params[5], params[8], params[9]}, {4}, Device::CPU);
                 tangential_dist = Tensor::from_vector({params[6], params[7], params[10], params[11]}, {4}, Device::CPU);
                 camera_model_type = lfs::core::CameraModelType::THIN_PRISM_FISHEYE;
+                break;
+
+            case CAMERA_MODEL::RATIONAL:
+                focal_x = params[0];
+                focal_y = params[1];
+                center_x = params[2];
+                center_y = params[3];
+                radial_dist = Tensor::from_vector(
+                    {params[4], params[5], params[6], params[7],
+                     params[8], params[9], params[10], params[11]},
+                    {8}, Device::CPU);
+                tangential_dist = Tensor::from_vector(
+                    {params[12], params[13], params[14]},
+                    {3}, Device::CPU);
+                camera_model_type = lfs::core::CameraModelType::RATIONAL;
                 break;
 
             case CAMERA_MODEL::FOV:

@@ -13,7 +13,8 @@ namespace lfs::rendering {
         PINHOLE = 0,
         ORTHO = 1,
         FISHEYE = 2,
-        EQUIRECTANGULAR = 3
+        EQUIRECTANGULAR = 3,
+        RATIONAL = 5
     };
 
     enum class GutRenderMode : int {
