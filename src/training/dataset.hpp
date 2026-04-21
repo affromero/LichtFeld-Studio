@@ -584,6 +584,12 @@ namespace lfs::training {
                 sequence_to_camera_.erase(it);
 
                 auto cam = dataset_->get_camera_shared(camera_idx);
+                ready.tensor = cam->normalize_loaded_image_orientation(
+                    std::move(ready.tensor));
+                if (ready.mask && ready.mask->is_valid()) {
+                    ready.mask = cam->normalize_loaded_mask_orientation(
+                        std::move(*ready.mask));
+                }
                 const auto shape = ready.tensor.shape();
                 cam->set_image_dimensions(static_cast<int>(shape[2]), static_cast<int>(shape[1]));
 

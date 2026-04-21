@@ -7,10 +7,70 @@
 #include "core/image_io.hpp"
 #include "core/image_loader.hpp"
 #include "core/logger.hpp"
+#include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cuda_runtime.h>
 
 namespace lfs::core {
+    namespace {
+        constexpr float RAW_RATIONAL_SCALE_TOLERANCE = 0.02f;
+
+        bool scales_match(
+            const int loaded_width,
+            const int loaded_height,
+            const int target_width,
+            const int target_height) {
+            if (loaded_width <= 0 || loaded_height <= 0 ||
+                target_width <= 0 || target_height <= 0) {
+                return false;
+            }
+
+            const float x_scale =
+                static_cast<float>(loaded_width) /
+                static_cast<float>(target_width);
+            const float y_scale =
+                static_cast<float>(loaded_height) /
+                static_cast<float>(target_height);
+            const float scale_norm = std::max(
+                std::fabs(x_scale), std::fabs(y_scale));
+            if (scale_norm <= 0.0f) {
+                return false;
+            }
+
+            return std::fabs(x_scale - y_scale) <=
+                   RAW_RATIONAL_SCALE_TOLERANCE * scale_norm;
+        }
+
+        Tensor rotate_image_chw_ccw_90(Tensor image) {
+            if (image.ndim() != 3) {
+                return image;
+            }
+
+            Tensor rotated = image.permute({0, 2, 1}).contiguous();
+            const int rotated_height = static_cast<int>(rotated.shape()[1]);
+            const Tensor reverse_rows =
+                Tensor::arange(static_cast<float>(rotated_height - 1), -1.0f, -1.0f)
+                    .to(DataType::Int32)
+                    .to(rotated.device());
+            return rotated.index_select(1, reverse_rows);
+        }
+
+        Tensor rotate_image_hw_ccw_90(Tensor image) {
+            if (image.ndim() != 2) {
+                return image;
+            }
+
+            Tensor rotated = image.transpose(0, 1).contiguous();
+            const int rotated_height = static_cast<int>(rotated.shape()[0]);
+            const Tensor reverse_rows =
+                Tensor::arange(static_cast<float>(rotated_height - 1), -1.0f, -1.0f)
+                    .to(DataType::Int32)
+                    .to(rotated.device());
+            return rotated.index_select(0, reverse_rows);
+        }
+    } // namespace
+
     static Tensor world_to_view(const Tensor& R, const Tensor& t) {
         // Create 4x4 identity matrix
         auto w2c = Tensor::eye(4, R.device());
@@ -254,6 +314,67 @@ namespace lfs::core {
         return {_focal_x * x_scale, _focal_y * y_scale, _center_x * x_scale, _center_y * y_scale};
     }
 
+    bool Camera::needs_raw_rational_orientation_correction(
+        const int loaded_width,
+        const int loaded_height) const noexcept {
+        if (_camera_model_type != CameraModelType::RATIONAL) {
+            return false;
+        }
+
+        const bool matches_native = scales_match(
+            loaded_width, loaded_height, _camera_width, _camera_height);
+        const bool matches_rotated_raw = scales_match(
+            loaded_width, loaded_height, _camera_height, _camera_width);
+
+        return matches_rotated_raw && !matches_native;
+    }
+
+    Tensor Camera::normalize_loaded_image_orientation(Tensor image) const {
+        if (image.ndim() != 3) {
+            return image;
+        }
+
+        const int loaded_width = static_cast<int>(image.shape()[2]);
+        const int loaded_height = static_cast<int>(image.shape()[1]);
+        if (!needs_raw_rational_orientation_correction(
+                loaded_width, loaded_height)) {
+            return image;
+        }
+
+        LOG_DEBUG(
+            "Rotating raw rational image '{}' 90 deg CCW to match {}x{} camera "
+            "model from loaded {}x{} tensor",
+            _image_name,
+            _camera_width,
+            _camera_height,
+            loaded_width,
+            loaded_height);
+        return rotate_image_chw_ccw_90(std::move(image));
+    }
+
+    Tensor Camera::normalize_loaded_mask_orientation(Tensor mask) const {
+        if (mask.ndim() != 2) {
+            return mask;
+        }
+
+        const int loaded_width = static_cast<int>(mask.shape()[1]);
+        const int loaded_height = static_cast<int>(mask.shape()[0]);
+        if (!needs_raw_rational_orientation_correction(
+                loaded_width, loaded_height)) {
+            return mask;
+        }
+
+        LOG_DEBUG(
+            "Rotating raw rational mask '{}' 90 deg CCW to match {}x{} camera "
+            "model from loaded {}x{} tensor",
+            _image_name,
+            _camera_width,
+            _camera_height,
+            loaded_width,
+            loaded_height);
+        return rotate_image_hw_ccw_90(std::move(mask));
+    }
+
     Tensor Camera::load_and_get_image(int resize_factor, int max_width) {
         const ImageLoadParams params{
             .path = _image_path,
@@ -262,6 +383,7 @@ namespace lfs::core {
             .stream = _stream};
 
         auto image = load_image_cached(params);
+        image = normalize_loaded_image_orientation(std::move(image));
 
         const auto shape = image.shape();
         _image_width = shape[2];
@@ -286,6 +408,9 @@ namespace lfs::core {
             auto result = get_image_info(_image_path);
             w = std::get<0>(result);
             h = std::get<1>(result);
+            if (needs_raw_rational_orientation_correction(w, h)) {
+                std::swap(w, h);
+            }
         }
 
         LOG_DEBUG("load_image_size(): Base dimensions: {}x{}, resize_factor={}, max_width={}",
@@ -330,6 +455,9 @@ namespace lfs::core {
         int w = std::get<0>(result);
         int h = std::get<1>(result);
         int c = std::get<2>(result);
+        if (needs_raw_rational_orientation_correction(w, h)) {
+            std::swap(w, h);
+        }
 
         if (resize_factor > 0) {
             w = w / resize_factor;
@@ -390,6 +518,8 @@ namespace lfs::core {
         } else if (mask.ndim() == 3 && mask.shape()[0] == 1) {
             mask = mask.squeeze(0);
         }
+
+        mask = normalize_loaded_mask_orientation(std::move(mask));
 
         if (invert_mask) {
             mask = Tensor::full(mask.shape(), 1.0f, mask.device()) - mask;

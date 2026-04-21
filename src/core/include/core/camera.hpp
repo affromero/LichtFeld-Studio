@@ -106,6 +106,11 @@ namespace lfs::core {
         void set_has_alpha(bool v) noexcept { _has_alpha = v; }
         int uid() const noexcept { return _uid; }
         int camera_id() const noexcept { return _camera_id; }
+        bool needs_raw_rational_orientation_correction(
+            int loaded_width,
+            int loaded_height) const noexcept;
+        Tensor normalize_loaded_image_orientation(Tensor image) const;
+        Tensor normalize_loaded_mask_orientation(Tensor mask) const;
 
         float FoVx() const noexcept { return _FoVx; }
         float FoVy() const noexcept { return _FoVy; }

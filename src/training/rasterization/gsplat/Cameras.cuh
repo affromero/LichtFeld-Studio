@@ -859,6 +859,12 @@ struct RationalCameraModel
         bool valid_flag;
     };
 
+    struct LinearizedImagePointReturn {
+        glm::fvec2 image_point;
+        std::array<glm::fvec2, 3> jacobian_camera_point;
+        bool valid_flag;
+    };
+
     inline __host__ __device__ auto compute_residual_and_jacobian(
         float x, float y, float xd_target, float yd_target) const -> JacobianReturn {
         auto const& [b1, b2, b3, d1, d2, d3, a1, a2] = parameters.rational_coeffs;
@@ -921,6 +927,63 @@ struct RationalCameraModel
         }
 
         return {fx, fy, fx_x, fx_y, fy_x, fy_y, true};
+    }
+
+    inline __host__ __device__ auto camera_point_to_image_point_linearized(
+        glm::fvec3 const& camera_point,
+        float margin_factor) const -> LinearizedImagePointReturn {
+        if (camera_point.z <= 0.f) {
+            return {{0.f, 0.f}, {}, false};
+        }
+
+        const float inv_z = 1.f / camera_point.z;
+        const float x = camera_point.x * inv_z;
+        const float y = camera_point.y * inv_z;
+        const auto [B, A, tx, ty, safe_denominator, dsafe_denominator_dr] =
+            compute_distortion_terms(x, y);
+        (void)safe_denominator;
+        (void)dsafe_denominator_dr;
+
+        if (!isfinite(B) || !isfinite(A) || B <= 0.0f) {
+            return {{0.f, 0.f}, {}, false};
+        }
+
+        const float xd = x * B + A * tx;
+        const float yd = y * B + A * ty;
+        const float skew = parameters.tangential_coeffs[2];
+        const auto image_point = glm::fvec2{
+            parameters.focal_length[0] * xd +
+                skew * yd + parameters.principal_point[0],
+            parameters.focal_length[1] * yd +
+                parameters.principal_point[1]};
+
+        auto valid = isfinite(image_point.x) && isfinite(image_point.y);
+        valid &= image_point_in_image_bounds_margin(
+            image_point, parameters.resolution, margin_factor);
+
+        auto const [fx_residual, fy_residual, dxd_dx, dxd_dy, dyd_dx, dyd_dy, valid_jacobian] =
+            compute_residual_and_jacobian(x, y, 0.f, 0.f);
+        (void)fx_residual;
+        (void)fy_residual;
+
+        if (!valid || !valid_jacobian) {
+            return {image_point, {}, false};
+        }
+
+        const auto dimage_dx = glm::fvec2{
+            parameters.focal_length[0] * dxd_dx + skew * dyd_dx,
+            parameters.focal_length[1] * dyd_dx};
+        const auto dimage_dy = glm::fvec2{
+            parameters.focal_length[0] * dxd_dy + skew * dyd_dy,
+            parameters.focal_length[1] * dyd_dy};
+
+        std::array<glm::fvec2, 3> jacobian_camera_point = {};
+        jacobian_camera_point[0] = dimage_dx * inv_z;
+        jacobian_camera_point[1] = dimage_dy * inv_z;
+        jacobian_camera_point[2] =
+            -(dimage_dx * x + dimage_dy * y) * inv_z;
+
+        return {image_point, jacobian_camera_point, true};
     }
 
     inline __host__ __device__ glm::fvec2 compute_undistortion_newton(
@@ -1492,6 +1555,54 @@ struct ImageGaussianReturn {
     glm::fmat2 covariance;
     bool valid;
 };
+
+template <size_t N_MAX_UNDISTORTION_ITERATIONS>
+inline __device__ auto
+world_gaussian_to_image_gaussian_linearized_shutter_pose(
+    RationalCameraModel<N_MAX_UNDISTORTION_ITERATIONS> const& camera_model,
+    RollingShutterParameters const& rolling_shutter_parameters,
+    float margin_factor,
+    glm::fvec3 const& gaussian_world_mean,
+    glm::fvec3 const& gaussian_world_scale,
+    glm::fquat const& gaussian_world_rot) -> ImageGaussianReturn {
+    auto const [image_mean, mean_valid] =
+        camera_model.template world_point_to_image_point_shutter_pose<>(
+            gaussian_world_mean,
+            rolling_shutter_parameters,
+            margin_factor);
+    if (!mean_valid) {
+        return {image_mean, glm::fmat2{0}, false};
+    }
+
+    auto const shutter_pose =
+        interpolate_shutter_pose(0.5f, rolling_shutter_parameters);
+    auto const gaussian_camera_mean =
+        glm::rotate(shutter_pose.q, gaussian_world_mean) + shutter_pose.t;
+    auto const linearized_projection =
+        camera_model.camera_point_to_image_point_linearized(
+            gaussian_camera_mean, margin_factor);
+    if (!linearized_projection.valid_flag) {
+        return {image_mean, glm::fmat2{0}, false};
+    }
+
+    auto const gaussian_rotation = glm::mat3_cast(gaussian_world_rot);
+    auto const shutter_rotation = glm::mat3_cast(shutter_pose.q);
+    auto image_covariance = glm::fmat2{0.f};
+#pragma unroll
+    for (auto i = 0u; i < 3; ++i) {
+        auto const world_axis =
+            gaussian_world_scale[i] * gaussian_rotation[i];
+        auto const camera_axis = shutter_rotation * world_axis;
+        auto const image_axis =
+            linearized_projection.jacobian_camera_point[0] * camera_axis.x +
+            linearized_projection.jacobian_camera_point[1] * camera_axis.y +
+            linearized_projection.jacobian_camera_point[2] * camera_axis.z;
+        image_covariance +=
+            glm::outerProduct(image_axis, image_axis);
+    }
+
+    return {image_mean, image_covariance, true};
+}
 
 template <class CameraModel>
 inline __device__ auto

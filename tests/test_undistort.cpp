@@ -269,6 +269,213 @@ TEST(RationalCameraModel, ForwardProjectionMatchesReference) {
     EXPECT_NEAR(image_point.y, expected.y, 1e-5f);
 }
 
+TEST(RationalCameraModel, Scan003ForwardProjectionMatchesReference) {
+    RationalCameraModel<>::Parameters params = {};
+    params.resolution = {728, 544};
+    params.shutter_type = ShutterType::GLOBAL;
+    params.principal_point = {362.5429993f, 283.7081604f};
+    params.focal_length = {317.8523280f, 317.7174315f};
+    params.rational_coeffs = {
+        0.3415374160f, 0.0f, 0.0f,
+        0.7019518018f, 0.0478103422f, -0.0008384892f,
+        -0.2079813331f, 0.0461935438f};
+    params.tangential_coeffs = {
+        -0.0000266082f, 0.0000096041f, 0.0415059291f};
+
+    RationalCameraModel<> camera_model(params);
+    const std::array<glm::fvec3, 5> cam_rays = {{
+        {0.0f, 0.0f, 1.0f},
+        {0.2f, -0.1f, 1.0f},
+        {-0.75f, 0.35f, 1.0f},
+        {3.25f, -2.0f, 1.0f},
+        {-4.0f, 3.0f, 1.0f},
+    }};
+
+    for (const auto& cam_ray : cam_rays) {
+        const auto [image_point, valid] =
+            camera_model.camera_ray_to_image_point(cam_ray, 0.0f);
+        const auto expected = project_rational_reference(
+            cam_ray,
+            params.rational_coeffs,
+            params.tangential_coeffs,
+            params.focal_length[0],
+            params.focal_length[1],
+            params.principal_point[0],
+            params.principal_point[1]);
+
+        EXPECT_TRUE(valid);
+        EXPECT_NEAR(image_point.x, expected.x, 1e-4f);
+        EXPECT_NEAR(image_point.y, expected.y, 1e-4f);
+    }
+}
+
+TEST(RationalCameraModel, Scan003NewtonInverseRoundTripsPixels) {
+    RationalCameraModel<>::Parameters params = {};
+    params.resolution = {728, 544};
+    params.shutter_type = ShutterType::GLOBAL;
+    params.principal_point = {362.5429993f, 283.7081604f};
+    params.focal_length = {317.8523280f, 317.7174315f};
+    params.rational_coeffs = {
+        0.3415374160f, 0.0f, 0.0f,
+        0.7019518018f, 0.0478103422f, -0.0008384892f,
+        -0.2079813331f, 0.0461935438f};
+    params.tangential_coeffs = {
+        -0.0000266082f, 0.0000096041f, 0.0415059291f};
+
+    RationalCameraModel<> camera_model(params);
+    const std::array<glm::fvec2, 5> image_points = {{
+        {0.5f, 0.5f},
+        {727.5f, 543.5f},
+        {362.5f, 283.5f},
+        {40.0f, 500.0f},
+        {690.0f, 25.0f},
+    }};
+
+    for (const auto& image_point : image_points) {
+        const auto [cam_ray, valid] =
+            camera_model.image_point_to_camera_ray(image_point);
+        ASSERT_TRUE(valid);
+
+        const auto [reprojected, reproj_valid] =
+            camera_model.camera_ray_to_image_point(cam_ray, 0.0f);
+        EXPECT_TRUE(reproj_valid);
+        EXPECT_NEAR(reprojected.x, image_point.x, 1e-3f);
+        EXPECT_NEAR(reprojected.y, image_point.y, 1e-3f);
+    }
+}
+
+TEST(CameraRawRationalLayout, RotatesTransposedImageBackToSensorFrame) {
+    const auto rotation = Tensor::eye(3, Device::CPU);
+    const auto translation = Tensor::zeros({3}, Device::CPU);
+    const auto rational = Tensor::zeros({8}, Device::CPU);
+    const auto tangential = Tensor::zeros({3}, Device::CPU);
+
+    Camera camera(
+        rotation,
+        translation,
+        100.0f,
+        100.0f,
+        1.0f,
+        1.0f,
+        rational,
+        tangential,
+        CameraModelType::RATIONAL,
+        "raw.png",
+        {},
+        {},
+        3,
+        2,
+        0);
+
+    const auto image = Tensor::from_vector(
+        {1.0f, 2.0f,
+         3.0f, 4.0f,
+         5.0f, 6.0f},
+        TensorShape({1, 3, 2}),
+        Device::CPU);
+    const auto rotated =
+        camera.normalize_loaded_image_orientation(image).cpu();
+
+    ASSERT_EQ(rotated.shape()[0], 1u);
+    ASSERT_EQ(rotated.shape()[1], 2u);
+    ASSERT_EQ(rotated.shape()[2], 3u);
+
+    const auto rotated_acc = rotated.accessor<float, 3>();
+    EXPECT_FLOAT_EQ(rotated_acc(0, 0, 0), 2.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 0, 1), 4.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 0, 2), 6.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 1, 0), 1.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 1, 1), 3.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 1, 2), 5.0f);
+
+    const auto mask = Tensor::from_vector(
+        {1.0f, 2.0f,
+         3.0f, 4.0f,
+         5.0f, 6.0f},
+        TensorShape({3, 2}),
+        Device::CPU);
+    const auto rotated_mask =
+        camera.normalize_loaded_mask_orientation(mask).cpu();
+    const auto mask_acc = rotated_mask.accessor<float, 2>();
+    ASSERT_EQ(rotated_mask.shape()[0], 2u);
+    ASSERT_EQ(rotated_mask.shape()[1], 3u);
+    EXPECT_FLOAT_EQ(mask_acc(0, 0), 2.0f);
+    EXPECT_FLOAT_EQ(mask_acc(0, 1), 4.0f);
+    EXPECT_FLOAT_EQ(mask_acc(0, 2), 6.0f);
+    EXPECT_FLOAT_EQ(mask_acc(1, 0), 1.0f);
+    EXPECT_FLOAT_EQ(mask_acc(1, 1), 3.0f);
+    EXPECT_FLOAT_EQ(mask_acc(1, 2), 5.0f);
+}
+
+TEST(CameraRawRationalLayout, RotatesDownsampledTransposedImageBackToSensorFrame) {
+    const auto rotation = Tensor::eye(3, Device::CPU);
+    const auto translation = Tensor::zeros({3}, Device::CPU);
+    const auto rational = Tensor::zeros({8}, Device::CPU);
+    const auto tangential = Tensor::zeros({3}, Device::CPU);
+
+    Camera camera(
+        rotation,
+        translation,
+        100.0f,
+        100.0f,
+        1.0f,
+        1.0f,
+        rational,
+        tangential,
+        CameraModelType::RATIONAL,
+        "raw_downsampled.png",
+        {},
+        {},
+        8,
+        6,
+        0);
+
+    const auto image = Tensor::from_vector(
+        {1.0f, 2.0f, 3.0f,
+         4.0f, 5.0f, 6.0f,
+         7.0f, 8.0f, 9.0f,
+         10.0f, 11.0f, 12.0f},
+        TensorShape({1, 4, 3}),
+        Device::CPU);
+    const auto rotated =
+        camera.normalize_loaded_image_orientation(image).cpu();
+
+    ASSERT_EQ(rotated.shape()[0], 1u);
+    ASSERT_EQ(rotated.shape()[1], 3u);
+    ASSERT_EQ(rotated.shape()[2], 4u);
+
+    const auto rotated_acc = rotated.accessor<float, 3>();
+    EXPECT_FLOAT_EQ(rotated_acc(0, 0, 0), 3.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 0, 1), 6.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 0, 2), 9.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 0, 3), 12.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 2, 0), 1.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 2, 1), 4.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 2, 2), 7.0f);
+    EXPECT_FLOAT_EQ(rotated_acc(0, 2, 3), 10.0f);
+
+    const auto mask = Tensor::from_vector(
+        {1.0f, 2.0f, 3.0f,
+         4.0f, 5.0f, 6.0f,
+         7.0f, 8.0f, 9.0f,
+         10.0f, 11.0f, 12.0f},
+        TensorShape({4, 3}),
+        Device::CPU);
+    const auto rotated_mask =
+        camera.normalize_loaded_mask_orientation(mask).cpu();
+    const auto mask_acc = rotated_mask.accessor<float, 2>();
+    ASSERT_EQ(rotated_mask.shape()[0], 3u);
+    ASSERT_EQ(rotated_mask.shape()[1], 4u);
+    EXPECT_FLOAT_EQ(mask_acc(0, 0), 3.0f);
+    EXPECT_FLOAT_EQ(mask_acc(0, 1), 6.0f);
+    EXPECT_FLOAT_EQ(mask_acc(0, 2), 9.0f);
+    EXPECT_FLOAT_EQ(mask_acc(0, 3), 12.0f);
+    EXPECT_FLOAT_EQ(mask_acc(2, 0), 1.0f);
+    EXPECT_FLOAT_EQ(mask_acc(2, 1), 4.0f);
+    EXPECT_FLOAT_EQ(mask_acc(2, 2), 7.0f);
+    EXPECT_FLOAT_EQ(mask_acc(2, 3), 10.0f);
+}
+
 // ====================== Per-model undistortion tests ======================
 
 TEST(UndistortPinhole, ZeroDistortion_Noop) {

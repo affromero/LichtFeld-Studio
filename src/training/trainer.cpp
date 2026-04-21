@@ -173,6 +173,7 @@ namespace lfs::training {
                     camera.mask_path(),
                     make_metrics_load_params(gt_config, camera, false));
                 mask = normalize_mask_tensor(std::move(mask));
+                mask = camera.normalize_loaded_mask_orientation(std::move(mask));
                 if (!mask.is_valid()) {
                     return std::unexpected("failed to decode mask");
                 }
@@ -235,18 +236,29 @@ namespace lfs::training {
                 lfs::io::cuda::launch_uint8_rgba_split_to_float32_rgb_and_alpha(
                     gpu_uint8.ptr<uint8_t>(), rgb.ptr<float>(), mask.ptr<float>(), H, W, nullptr);
 
+                rgb = camera.normalize_loaded_image_orientation(std::move(rgb));
+                mask = camera.normalize_loaded_mask_orientation(std::move(mask));
+                const size_t normalized_H = rgb.shape()[1];
+                const size_t normalized_W = rgb.shape()[2];
+
                 if (opt_params.invert_masks) {
-                    lfs::io::cuda::launch_mask_invert(mask.ptr<float>(), H, W, nullptr);
+                    lfs::io::cuda::launch_mask_invert(
+                        mask.ptr<float>(), normalized_H, normalized_W, nullptr);
                 }
                 if (opt_params.mask_threshold > 0.0f) {
-                    lfs::io::cuda::launch_mask_threshold(mask.ptr<float>(), H, W, opt_params.mask_threshold, nullptr);
+                    lfs::io::cuda::launch_mask_threshold(
+                        mask.ptr<float>(),
+                        normalized_H,
+                        normalized_W,
+                        opt_params.mask_threshold,
+                        nullptr);
                 }
 
                 if (camera.is_undistort_prepared()) {
                     const auto scaled = lfs::core::scale_undistort_params(
                         camera.undistort_params(),
-                        static_cast<int>(W),
-                        static_cast<int>(H));
+                        static_cast<int>(normalized_W),
+                        static_cast<int>(normalized_H));
                     rgb = lfs::core::undistort_image(rgb, scaled, nullptr);
                     mask = lfs::core::undistort_mask(mask, scaled, nullptr);
                 }
@@ -284,6 +296,8 @@ namespace lfs::training {
                 inputs.gt_image = loader->load_image_immediate(
                     camera.image_path(),
                     make_metrics_load_params(gt_config, camera, true));
+                inputs.gt_image = camera.normalize_loaded_image_orientation(
+                    std::move(inputs.gt_image));
             } catch (const std::exception& e) {
                 return std::unexpected(e.what());
             }

@@ -430,16 +430,27 @@ namespace lfs::training {
             H, W, nullptr);
         gpu_uint8 = lfs::core::Tensor();
 
+        rgb = cam->normalize_loaded_image_orientation(std::move(rgb));
+        mask = cam->normalize_loaded_mask_orientation(std::move(mask));
+        const size_t normalized_H = rgb.shape()[1];
+        const size_t normalized_W = rgb.shape()[2];
+
         if (_params.optimization.invert_masks)
-            lfs::io::cuda::launch_mask_invert(mask.ptr<float>(), H, W, nullptr);
+            lfs::io::cuda::launch_mask_invert(
+                mask.ptr<float>(), normalized_H, normalized_W, nullptr);
         if (_params.optimization.mask_threshold > 0)
             lfs::io::cuda::launch_mask_threshold(
-                mask.ptr<float>(), H, W, _params.optimization.mask_threshold, nullptr);
+                mask.ptr<float>(),
+                normalized_H,
+                normalized_W,
+                _params.optimization.mask_threshold,
+                nullptr);
 
         if (cam->is_undistort_prepared()) {
             const auto scaled = lfs::core::scale_undistort_params(
                 cam->undistort_params(),
-                static_cast<int>(W), static_cast<int>(H));
+                static_cast<int>(normalized_W),
+                static_cast<int>(normalized_H));
             rgb = lfs::core::undistort_image(rgb, scaled, nullptr);
             mask = lfs::core::undistort_mask(mask, scaled, nullptr);
         }
