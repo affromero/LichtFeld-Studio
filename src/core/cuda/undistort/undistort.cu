@@ -42,6 +42,71 @@ namespace lfs::core {
             return dist[10];
         }
 
+        inline __host__ __device__ int normalize_rotation_quadrants(
+            const int image_rotation_quadrants_cw) {
+            int normalized = image_rotation_quadrants_cw % 4;
+            if (normalized < 0) {
+                normalized += 4;
+            }
+            return normalized;
+        }
+
+        inline __host__ __device__ void rotate_pixel_stored_to_native(
+            const float stored_x,
+            const float stored_y,
+            const int stored_width,
+            const int stored_height,
+            const int image_rotation_quadrants_cw,
+            float& native_x,
+            float& native_y) {
+            switch (normalize_rotation_quadrants(image_rotation_quadrants_cw)) {
+            case 1:
+                native_x = stored_y;
+                native_y = static_cast<float>(stored_width - 1) - stored_x;
+                return;
+            case 2:
+                native_x = static_cast<float>(stored_width - 1) - stored_x;
+                native_y = static_cast<float>(stored_height - 1) - stored_y;
+                return;
+            case 3:
+                native_x = static_cast<float>(stored_height - 1) - stored_y;
+                native_y = stored_x;
+                return;
+            default:
+                native_x = stored_x;
+                native_y = stored_y;
+                return;
+            }
+        }
+
+        inline __host__ __device__ void rotate_pixel_native_to_stored(
+            const float native_x,
+            const float native_y,
+            const int stored_width,
+            const int stored_height,
+            const int image_rotation_quadrants_cw,
+            float& stored_x,
+            float& stored_y) {
+            switch (normalize_rotation_quadrants(image_rotation_quadrants_cw)) {
+            case 1:
+                stored_x = static_cast<float>(stored_width - 1) - native_y;
+                stored_y = native_x;
+                return;
+            case 2:
+                stored_x = static_cast<float>(stored_width - 1) - native_x;
+                stored_y = static_cast<float>(stored_height - 1) - native_y;
+                return;
+            case 3:
+                stored_x = native_y;
+                stored_y = static_cast<float>(stored_height - 1) - native_x;
+                return;
+            default:
+                stored_x = native_x;
+                stored_y = native_y;
+                return;
+            }
+        }
+
         // COLMAP sensor/models.h (BSD-3 licensed formulas)
         __device__ void apply_distortion_pinhole(
             const float x, const float y,
@@ -251,8 +316,20 @@ namespace lfs::core {
 
             const float src_skew =
                 rational_skew(params.model_type, params.distortion, params.num_distortion);
-            const float sx = dnx * params.src_fx + src_skew * dny + params.src_cx - PIXEL_CENTER_OFFSET;
-            const float sy = dny * params.src_fy + params.src_cy - PIXEL_CENTER_OFFSET;
+            const float src_native_x =
+                dnx * params.src_fx + src_skew * dny + params.src_cx - PIXEL_CENTER_OFFSET;
+            const float src_native_y =
+                dny * params.src_fy + params.src_cy - PIXEL_CENTER_OFFSET;
+            float sx = 0.0f;
+            float sy = 0.0f;
+            rotate_pixel_native_to_stored(
+                src_native_x,
+                src_native_y,
+                params.src_width,
+                params.src_height,
+                params.image_rotation_quadrants_cw,
+                sx,
+                sy);
 
             const int src_plane = params.src_height * params.src_width;
             const int dst_plane = params.dst_height * params.dst_width;
@@ -285,8 +362,20 @@ namespace lfs::core {
 
             const float src_skew =
                 rational_skew(params.model_type, params.distortion, params.num_distortion);
-            const float sx = dnx * params.src_fx + src_skew * dny + params.src_cx - PIXEL_CENTER_OFFSET;
-            const float sy = dny * params.src_fy + params.src_cy - PIXEL_CENTER_OFFSET;
+            const float src_native_x =
+                dnx * params.src_fx + src_skew * dny + params.src_cx - PIXEL_CENTER_OFFSET;
+            const float src_native_y =
+                dny * params.src_fy + params.src_cy - PIXEL_CENTER_OFFSET;
+            float sx = 0.0f;
+            float sy = 0.0f;
+            rotate_pixel_native_to_stored(
+                src_native_x,
+                src_native_y,
+                params.src_width,
+                params.src_height,
+                params.image_rotation_quadrants_cw,
+                sx,
+                sy);
 
             dst[oy * params.dst_width + ox] =
                 bilinear_sample(src, params.src_width, params.src_height, params.src_width, sx, sy);
@@ -570,12 +659,25 @@ namespace lfs::core {
             const float img_x, const float img_y,
             const float fx, const float fy,
             const float cx, const float cy,
+            const int stored_width, const int stored_height,
+            const int image_rotation_quadrants_cw,
             const float* dist, const int num_dist,
             float& ux, float& uy) {
 
-            const float yd = (img_y - cy) / fy;
+            float img_native_x = 0.0f;
+            float img_native_y = 0.0f;
+            rotate_pixel_stored_to_native(
+                img_x,
+                img_y,
+                stored_width,
+                stored_height,
+                image_rotation_quadrants_cw,
+                img_native_x,
+                img_native_y);
+
+            const float yd = (img_native_y - cy) / fy;
             const float xd =
-                ((img_x - cx) - rational_skew(CameraModelType::RATIONAL, dist, num_dist) * yd) / fx;
+                ((img_native_x - cx) - rational_skew(CameraModelType::RATIONAL, dist, num_dist) * yd) / fx;
             ux = xd;
             uy = yd;
 
@@ -625,6 +727,8 @@ namespace lfs::core {
             const float img_x, const float img_y,
             const float fx, const float fy,
             const float cx, const float cy,
+            const int stored_width, const int stored_height,
+            const int image_rotation_quadrants_cw,
             const CameraModelType model,
             const float* dist, const int num_dist,
             float& ux, float& uy) {
@@ -637,7 +741,20 @@ namespace lfs::core {
             case CameraModelType::THIN_PRISM_FISHEYE:
                 return cam_from_img_generic_cpu(img_x, img_y, fx, fy, cx, cy, model, dist, num_dist, ux, uy);
             case CameraModelType::RATIONAL:
-                return cam_from_img_rational_cpu(img_x, img_y, fx, fy, cx, cy, dist, num_dist, ux, uy);
+                return cam_from_img_rational_cpu(
+                    img_x,
+                    img_y,
+                    fx,
+                    fy,
+                    cx,
+                    cy,
+                    stored_width,
+                    stored_height,
+                    image_rotation_quadrants_cw,
+                    dist,
+                    num_dist,
+                    ux,
+                    uy);
             default:
                 ux = (img_x - cx) / fx;
                 uy = (img_y - cy) / fy;
@@ -651,7 +768,9 @@ namespace lfs::core {
         float fx, float fy, float cx, float cy,
         int width, int height,
         const Tensor& radial, const Tensor& tangential,
-        CameraModelType model, float blank_pixels) {
+        CameraModelType model,
+        int image_rotation_quadrants_cw,
+        float blank_pixels) {
 
         UndistortParams params{};
         params.src_fx = fx;
@@ -660,6 +779,7 @@ namespace lfs::core {
         params.src_cy = cy;
         params.src_width = width;
         params.src_height = height;
+        params.image_rotation_quadrants_cw = image_rotation_quadrants_cw;
         params.model_type = model;
 
         // Coefficient layout per model:
@@ -753,7 +873,20 @@ namespace lfs::core {
                                      const bool trace_x_axis, bool& edge_has_valid_sample) {
             float ux, uy;
             if (!cam_from_img_cpu(
-                    px, py, fx, fy, cx, cy, model, params.distortion, params.num_distortion, ux, uy)) {
+                    px,
+                    py,
+                    fx,
+                    fy,
+                    cx,
+                    cy,
+                    width,
+                    height,
+                    image_rotation_quadrants_cw,
+                    model,
+                    params.distortion,
+                    params.num_distortion,
+                    ux,
+                    uy)) {
                 return;
             }
 
@@ -915,6 +1048,8 @@ namespace lfs::core {
         }
         scaled.src_width = actual_src_width;
         scaled.src_height = actual_src_height;
+        scaled.image_rotation_quadrants_cw =
+            params.image_rotation_quadrants_cw;
 
         scaled.dst_fx = params.dst_fx * sx;
         scaled.dst_fy = params.dst_fy * sy;

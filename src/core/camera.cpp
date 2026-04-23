@@ -112,7 +112,8 @@ namespace lfs::core {
                    const std::filesystem::path& mask_path,
                    int camera_width, int camera_height,
                    int uid,
-                   int camera_id)
+                   int camera_id,
+                   int image_rotation_quadrants_cw)
         : _uid(uid),
           _camera_id(camera_id),
           _focal_x(focal_x),
@@ -130,7 +131,8 @@ namespace lfs::core {
           _camera_width(camera_width),
           _camera_height(camera_height),
           _image_width(camera_width),
-          _image_height(camera_height) {
+          _image_height(camera_height),
+          _image_rotation_quadrants_cw(image_rotation_quadrants_cw) {
 
         // Validate inputs
         if (!R.is_valid() || R.numel() == 0) {
@@ -204,6 +206,7 @@ namespace lfs::core {
           _camera_height(other._camera_height),
           _image_width(other._image_width),
           _image_height(other._image_height),
+          _image_rotation_quadrants_cw(other._image_rotation_quadrants_cw),
           _world_view_transform(std::move(other._world_view_transform)),
           _cam_position(std::move(other._cam_position)),
           _cached_mask(std::move(other._cached_mask)),
@@ -246,6 +249,7 @@ namespace lfs::core {
             _camera_height = other._camera_height;
             _image_width = other._image_width;
             _image_height = other._image_height;
+            _image_rotation_quadrants_cw = other._image_rotation_quadrants_cw;
             _world_view_transform = std::move(other._world_view_transform);
             _cam_position = std::move(other._cam_position);
             _cached_mask = std::move(other._cached_mask);
@@ -283,6 +287,7 @@ namespace lfs::core {
           _camera_height(other._camera_height),
           _image_width(other._image_width),
           _image_height(other._image_height),
+          _image_rotation_quadrants_cw(other._image_rotation_quadrants_cw),
           _cam_position(other._cam_position),
           _FoVx(other._FoVx),
           _FoVy(other._FoVy) {
@@ -317,6 +322,9 @@ namespace lfs::core {
     bool Camera::needs_raw_rational_orientation_correction(
         const int loaded_width,
         const int loaded_height) const noexcept {
+        if (_image_rotation_quadrants_cw != 0) {
+            return false;
+        }
         if (_camera_model_type != CameraModelType::RATIONAL) {
             return false;
         }
@@ -558,7 +566,7 @@ namespace lfs::core {
             _focal_x, _focal_y, _center_x, _center_y,
             _camera_width, _camera_height,
             _radial_distortion, _tangential_distortion,
-            _camera_model_type, blank_pixels);
+            _camera_model_type, _image_rotation_quadrants_cw, blank_pixels);
 
         _undistort_precomputed = true;
     }

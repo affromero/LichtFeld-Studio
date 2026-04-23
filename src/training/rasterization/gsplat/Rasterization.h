@@ -42,6 +42,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,     // optional
         const float* tangential_coeffs, // optional
         const float* thin_prism_coeffs, // optional
+        const int32_t* image_rotation_quadrants_cw, // [C] optional
         // intersections
         const int32_t* tile_offsets, // [C, tile_height, tile_width]
         const int32_t* flatten_ids,  // [n_isects]
@@ -83,6 +84,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,
         const float* tangential_coeffs,
         const float* thin_prism_coeffs,
+        const int32_t* image_rotation_quadrants_cw,
         // intersections
         const int32_t* tile_offsets, // [C, tile_height, tile_width]
         const int32_t* flatten_ids,  // [n_isects]

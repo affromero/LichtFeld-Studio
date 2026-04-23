@@ -38,6 +38,7 @@ namespace gsplat_lfs {
         const scalar_t* __restrict__ radial_coeffs,     // [C, 6] or [C, 4] optional
         const scalar_t* __restrict__ tangential_coeffs, // [C, 2] optional
         const scalar_t* __restrict__ thin_prism_coeffs, // [C, 2] optional
+        const int32_t* __restrict__ image_rotation_quadrants_cw, // [C] optional
         // outputs
         int32_t* __restrict__ radii,         // [C, N, 2]
         scalar_t* __restrict__ means2d,      // [C, N, 2]
@@ -184,6 +185,10 @@ namespace gsplat_lfs {
                 cm_params.tangential_coeffs =
                     make_array<float, 3>(tangential_coeffs + cid * 3);
             }
+            cm_params.image_rotation_quadrants_cw =
+                image_rotation_quadrants_cw == nullptr
+                    ? 0
+                    : image_rotation_quadrants_cw[cid];
             RationalCameraModel camera_model(cm_params);
             image_gaussian_return =
                 world_gaussian_to_image_gaussian_linearized_shutter_pose(
@@ -292,6 +297,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,     // [C, 6] or [C, 4] optional (can be nullptr)
         const float* tangential_coeffs, // [C, 2] optional (can be nullptr)
         const float* thin_prism_coeffs, // [C, 2] optional (can be nullptr)
+        const int32_t* image_rotation_quadrants_cw, // [C] optional
         // outputs
         int32_t* radii,       // [C, N, 2]
         float* means2d,       // [C, N, 2]
@@ -332,6 +338,7 @@ namespace gsplat_lfs {
                 radial_coeffs,
                 tangential_coeffs,
                 thin_prism_coeffs,
+                image_rotation_quadrants_cw,
                 radii,
                 means2d,
                 depths,

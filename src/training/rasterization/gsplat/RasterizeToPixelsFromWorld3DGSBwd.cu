@@ -51,6 +51,7 @@ namespace gsplat_lfs {
         const scalar_t* __restrict__ radial_coeffs,     // [C, 6] or [C, 4] optional
         const scalar_t* __restrict__ tangential_coeffs, // [C, 2] optional
         const scalar_t* __restrict__ thin_prism_coeffs, // [C, 2] optional
+        const int32_t* __restrict__ image_rotation_quadrants_cw, // [C] optional
         // intersections
         const int32_t* __restrict__ tile_offsets, // [C, tile_height, tile_width]
         const int32_t* __restrict__ flatten_ids,  // [n_isects]
@@ -201,6 +202,10 @@ namespace gsplat_lfs {
                 cm_params.tangential_coeffs =
                     make_array<float, 3>(tangential_coeffs + cid * 3);
             }
+            cm_params.image_rotation_quadrants_cw =
+                image_rotation_quadrants_cw == nullptr
+                    ? 0
+                    : image_rotation_quadrants_cw[cid];
             RationalCameraModel camera_model(cm_params);
             ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
         } else {
@@ -486,6 +491,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,
         const float* tangential_coeffs,
         const float* thin_prism_coeffs,
+        const int32_t* image_rotation_quadrants_cw,
         const int32_t* tile_offsets,
         const int32_t* flatten_ids,
         const float* render_alphas,
@@ -557,6 +563,7 @@ namespace gsplat_lfs {
                 radial_coeffs,
                 tangential_coeffs,
                 thin_prism_coeffs,
+                image_rotation_quadrants_cw,
                 tile_offsets,
                 flatten_ids,
                 render_alphas,
@@ -601,6 +608,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,                                            \
         const float* tangential_coeffs,                                        \
         const float* thin_prism_coeffs,                                        \
+        const int32_t* image_rotation_quadrants_cw,                           \
         const int32_t* tile_offsets,                                           \
         const int32_t* flatten_ids,                                            \
         const float* render_alphas,                                            \

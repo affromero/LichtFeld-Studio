@@ -153,6 +153,41 @@ namespace lfs::training {
         }
     };
 
+    /// Sequential sampler - yields indices in deterministic ascending order.
+    class SequentialSampler {
+    public:
+        explicit SequentialSampler(size_t size) : size_(size),
+                                                  index_(0) {}
+
+        void reset(std::optional<size_t> new_size = std::nullopt) {
+            if (new_size) {
+                size_ = *new_size;
+            }
+            index_ = 0;
+        }
+
+        std::optional<std::vector<size_t>> next(size_t batch_size) {
+            if (index_ >= size_) {
+                return std::nullopt;
+            }
+
+            const size_t end = std::min(index_ + batch_size, size_);
+            std::vector<size_t> batch;
+            batch.reserve(end - index_);
+            for (size_t i = index_; i < end; ++i) {
+                batch.push_back(i);
+            }
+            index_ = end;
+            return batch;
+        }
+
+        size_t size() const { return size_; }
+
+    private:
+        size_t size_;
+        size_t index_;
+    };
+
     /// Camera with loaded image
     struct CameraWithImage {
         lfs::core::Camera* camera;
@@ -538,6 +573,7 @@ namespace lfs::training {
         bool invert_masks = false;      // Invert mask values (1.0 - mask)
         float mask_threshold = 0.0f;    // If > 0, values >= threshold become 1.0
         bool use_alpha_as_mask = false; // Extract alpha channel from RGBA as mask
+        bool apply_undistort = false;   // Apply precomputed undistortion to inputs
     };
 
     // Pipelined DataLoader with GPU batch JPEG decoding
@@ -647,7 +683,7 @@ namespace lfs::training {
                 request.path = cam->image_path();
                 request.params.resize_factor = dataset_->get_resize_factor();
                 request.params.max_width = dataset_->get_max_width();
-                if (cam->is_undistort_prepared()) {
+                if (mask_config_.apply_undistort && cam->is_undistort_prepared()) {
                     request.undistort = &cam->undistort_params();
                     request.params.undistort = request.undistort;
                 }

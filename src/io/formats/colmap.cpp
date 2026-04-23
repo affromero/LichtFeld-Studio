@@ -15,6 +15,8 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <nlohmann/json.hpp>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -33,9 +35,115 @@ namespace lfs::io {
 
     namespace {
         constexpr size_t CANCEL_POLL_INTERVAL = 64;
+        constexpr const char* B2G_CAMERA_MODELS_FILENAME = "b2g_camera_models.json";
 
         [[nodiscard]] bool should_poll_cancel(const size_t index) {
             return (index % CANCEL_POLL_INTERVAL) == 0;
+        }
+
+        struct B2GCameraSidecar {
+            std::unordered_map<uint32_t, int> image_rotation_quadrants_cw_by_camera_id;
+        };
+
+        [[nodiscard]] int normalize_rotation_degrees_to_quadrants(const int degrees) {
+            int normalized = degrees % 360;
+            if (normalized < 0) {
+                normalized += 360;
+            }
+            if ((normalized % 90) != 0) {
+                return 0;
+            }
+            return normalized / 90;
+        }
+
+        [[nodiscard]] int parse_image_rotation_quadrants_cw(
+            const nlohmann::json& camera_json,
+            const nlohmann::json& root_json) {
+            if (const auto quadrants_it = camera_json.find("image_rotation_quadrants_cw");
+                quadrants_it != camera_json.end() && quadrants_it->is_number_integer()) {
+                return normalize_rotation_degrees_to_quadrants(
+                    quadrants_it->get<int>() * 90);
+            }
+            if (const auto degrees_it = camera_json.find("image_rotation_cw_degrees");
+                degrees_it != camera_json.end() && degrees_it->is_number_integer()) {
+                return normalize_rotation_degrees_to_quadrants(
+                    degrees_it->get<int>());
+            }
+            if (const auto orientation_it = root_json.find("image_orientation");
+                orientation_it != root_json.end() && orientation_it->is_string()) {
+                const auto orientation = orientation_it->get<std::string>();
+                if (orientation == "portrait_cw90_v1" ||
+                    orientation == "portrait_cw90_exact_rational_v2") {
+                    return 1;
+                }
+            }
+            return 0;
+        }
+
+        [[nodiscard]] fs::path colmap_dataset_root_from_sparse_path(
+            const fs::path& sparse_path) {
+            if (sparse_path.filename() == "0" &&
+                sparse_path.parent_path().filename() == "sparse") {
+                return sparse_path.parent_path().parent_path();
+            }
+            return sparse_path;
+        }
+
+        [[nodiscard]] std::optional<B2GCameraSidecar> load_b2g_camera_sidecar(
+            const fs::path& dataset_root) {
+            const fs::path sidecar_path = dataset_root / B2G_CAMERA_MODELS_FILENAME;
+            if (!fs::exists(sidecar_path)) {
+                return std::nullopt;
+            }
+
+            try {
+                std::ifstream file(sidecar_path);
+                if (!file) {
+                    return std::nullopt;
+                }
+                const auto json = nlohmann::json::parse(file, nullptr, true, true);
+                const auto cameras_it = json.find("cameras");
+                if (cameras_it == json.end() || !cameras_it->is_object()) {
+                    return std::nullopt;
+                }
+
+                B2GCameraSidecar sidecar;
+                for (auto it = cameras_it->begin(); it != cameras_it->end(); ++it) {
+                    if (!it.value().is_object()) {
+                        continue;
+                    }
+                    try {
+                        const auto camera_id = static_cast<uint32_t>(
+                            std::stoul(it.key()));
+                        const int quadrants =
+                            parse_image_rotation_quadrants_cw(it.value(), json);
+                        sidecar.image_rotation_quadrants_cw_by_camera_id[camera_id] =
+                            quadrants;
+                    } catch (const std::exception&) {
+                        continue;
+                    }
+                }
+                return sidecar;
+            } catch (const std::exception& e) {
+                LOG_WARN("Failed to parse {}: {}",
+                         lfs::core::path_to_utf8(sidecar_path),
+                         e.what());
+                return std::nullopt;
+            }
+        }
+
+        [[nodiscard]] int image_rotation_quadrants_for_camera(
+            const std::optional<B2GCameraSidecar>& sidecar,
+            const uint32_t camera_id) {
+            if (!sidecar) {
+                return 0;
+            }
+            const auto it =
+                sidecar->image_rotation_quadrants_cw_by_camera_id.find(camera_id);
+            if (it == sidecar->image_rotation_quadrants_cw_by_camera_id.end()) {
+                return 0;
+            }
+            return it->second;
         }
     } // namespace
 
@@ -884,6 +992,8 @@ namespace lfs::io {
         std::vector<std::shared_ptr<Camera>> cameras;
         cameras.reserve(images.size());
 
+        const auto b2g_camera_sidecar = load_b2g_camera_sidecar(base_path);
+
         RecursiveFileCache image_cache(images_path, options.cancel_requested);
         MaskDirCache mask_cache(base_path, options.cancel_requested);
         bool used_recursive_image_lookup = false;
@@ -1103,6 +1213,11 @@ namespace lfs::io {
                 return make_ambiguous_mask_reference_error(base_path, img.name);
             }
 
+            const int image_rotation_quadrants_cw =
+                image_rotation_quadrants_for_camera(
+                    b2g_camera_sidecar,
+                    img.camera_id);
+
             // Validate mask dimensions match image dimensions
             if (!mask_path.empty()) {
                 auto [img_w, img_h, img_c] = lfs::core::get_image_info(image_path);
@@ -1131,7 +1246,8 @@ namespace lfs::io {
                 cam_data.width,
                 cam_data.height,
                 static_cast<int>(i),
-                static_cast<int>(img.camera_id));
+                static_cast<int>(img.camera_id),
+                image_rotation_quadrants_cw);
 
             camera->precompute_undistortion();
 
@@ -1291,6 +1407,8 @@ namespace lfs::io {
 
         std::vector<std::shared_ptr<Camera>> cameras;
         cameras.reserve(images.size());
+        const auto b2g_camera_sidecar = load_b2g_camera_sidecar(
+            colmap_dataset_root_from_sparse_path(sparse_path));
 
         std::vector<float> camera_positions;
         camera_positions.reserve(images.size() * 3);
@@ -1478,7 +1596,11 @@ namespace lfs::io {
                 fs::path{}, // Empty mask path
                 cam_data.width,
                 cam_data.height,
-                static_cast<int>(i));
+                static_cast<int>(i),
+                static_cast<int>(img.camera_id),
+                image_rotation_quadrants_for_camera(
+                    b2g_camera_sidecar,
+                    img.camera_id));
 
             cameras.push_back(std::move(camera));
         }

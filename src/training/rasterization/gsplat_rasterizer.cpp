@@ -144,10 +144,11 @@ namespace lfs::training {
             // Distortion coefficients
             const core::Tensor radial_dist = viewpoint_camera.radial_distortion();
             const core::Tensor tangential_dist = viewpoint_camera.tangential_distortion();
-            core::Tensor radial_cuda, tangential_cuda, thin_prism_cuda;
+            core::Tensor radial_cuda, tangential_cuda, thin_prism_cuda, image_rotation_cuda;
             const float* radial_ptr = nullptr;
             const float* tangential_ptr = nullptr;
             const float* thin_prism_ptr = nullptr;
+            const int32_t* image_rotation_ptr = nullptr;
 
             // Helper to copy tensor to CUDA
             auto to_cuda_contiguous = [](core::Tensor t) {
@@ -187,6 +188,15 @@ namespace lfs::training {
                         tangential_dist.numel() == 3 ? tangential_dist : tangential_dist.slice(0, 0, 3));
                     tangential_ptr = tangential_cuda.ptr<float>();
                 }
+                image_rotation_cuda = core::Tensor::from_vector(
+                    std::vector<int32_t>{
+                        static_cast<int32_t>(
+                            viewpoint_camera.image_rotation_quadrants_cw())},
+                    {1},
+                    core::Device::CPU)
+                                          .to(core::Device::CUDA)
+                                          .contiguous();
+                image_rotation_ptr = image_rotation_cuda.ptr<int32_t>();
                 break;
             case CameraModelType::PINHOLE:
                 if (radial_dist.is_valid() && radial_dist.numel() > 0) {
@@ -330,6 +340,7 @@ namespace lfs::training {
                 radial_ptr,
                 tangential_ptr,
                 thin_prism_ptr,
+                image_rotation_ptr,
                 result,
                 fwd_stream);
             isect_ids_to_free = result.isect_ids;
@@ -480,9 +491,11 @@ namespace lfs::training {
             ctx.radial_ptr = radial_ptr;
             ctx.tangential_ptr = tangential_ptr;
             ctx.thin_prism_ptr = thin_prism_ptr;
+            ctx.image_rotation_ptr = image_rotation_ptr;
             ctx.radial_cuda = radial_cuda;
             ctx.tangential_cuda = tangential_cuda;
             ctx.thin_prism_cuda = thin_prism_cuda;
+            ctx.image_rotation_cuda = image_rotation_cuda;
 
             // Save settings
             ctx.N = N;
@@ -684,6 +697,7 @@ namespace lfs::training {
                 ctx.radial_ptr,
                 ctx.tangential_ptr,
                 ctx.thin_prism_ptr,
+                ctx.image_rotation_ptr,
                 ctx.render_alphas_ptr,
                 ctx.last_ids_ptr,
                 ctx.tile_offsets_ptr,

@@ -770,6 +770,7 @@ struct RationalCameraModel
         std::array<float, 2> focal_length;
         std::array<float, 8> rational_coeffs = {0.f};   // b1,b2,b3,d1,d2,d3,a1,a2
         std::array<float, 3> tangential_coeffs = {0.f}; // p1,p2,skew
+        int image_rotation_quadrants_cw = 0;
     };
 
     __host__ __device__ RationalCameraModel(
@@ -780,6 +781,68 @@ struct RationalCameraModel
 
     Parameters parameters;
     float stop_undistortion_error;
+
+    inline __host__ __device__ int normalized_image_rotation_quadrants() const {
+        auto quadrants = parameters.image_rotation_quadrants_cw % 4;
+        if (quadrants < 0) {
+            quadrants += 4;
+        }
+        return quadrants;
+    }
+
+    inline __host__ __device__ glm::fvec2 stored_image_point_to_native(
+        glm::fvec2 const& image_point) const {
+        const float stored_width = static_cast<float>(parameters.resolution[0]);
+        const float stored_height = static_cast<float>(parameters.resolution[1]);
+        switch (normalized_image_rotation_quadrants()) {
+        case 1:
+            return {image_point.y, (stored_width - 1.f) - image_point.x};
+        case 2:
+            return {
+                (stored_width - 1.f) - image_point.x,
+                (stored_height - 1.f) - image_point.y};
+        case 3:
+            return {(stored_height - 1.f) - image_point.y, image_point.x};
+        default:
+            return image_point;
+        }
+    }
+
+    inline __host__ __device__ glm::fvec2 native_image_point_to_stored(
+        glm::fvec2 const& native_image_point) const {
+        const float stored_width = static_cast<float>(parameters.resolution[0]);
+        const float stored_height = static_cast<float>(parameters.resolution[1]);
+        switch (normalized_image_rotation_quadrants()) {
+        case 1:
+            return {
+                (stored_width - 1.f) - native_image_point.y,
+                native_image_point.x};
+        case 2:
+            return {
+                (stored_width - 1.f) - native_image_point.x,
+                (stored_height - 1.f) - native_image_point.y};
+        case 3:
+            return {
+                native_image_point.y,
+                (stored_height - 1.f) - native_image_point.x};
+        default:
+            return native_image_point;
+        }
+    }
+
+    inline __host__ __device__ glm::fvec2 native_image_jacobian_to_stored(
+        glm::fvec2 const& native_image_jacobian) const {
+        switch (normalized_image_rotation_quadrants()) {
+        case 1:
+            return {-native_image_jacobian.y, native_image_jacobian.x};
+        case 2:
+            return {-native_image_jacobian.x, -native_image_jacobian.y};
+        case 3:
+            return {native_image_jacobian.y, -native_image_jacobian.x};
+        default:
+            return native_image_jacobian;
+        }
+    }
 
     struct DistortionTerms {
         float B;
@@ -841,11 +904,13 @@ struct RationalCameraModel
         const float yd = uv.y * B + A * ty;
         const float skew = parameters.tangential_coeffs[2];
 
-        const auto image_point = glm::fvec2{
+        const auto native_image_point = glm::fvec2{
             parameters.focal_length[0] * xd +
                 skew * yd + parameters.principal_point[0],
             parameters.focal_length[1] * yd +
                 parameters.principal_point[1]};
+        const auto image_point =
+            native_image_point_to_stored(native_image_point);
 
         auto valid = isfinite(image_point.x) && isfinite(image_point.y);
         valid &= image_point_in_image_bounds_margin(
@@ -951,11 +1016,13 @@ struct RationalCameraModel
         const float xd = x * B + A * tx;
         const float yd = y * B + A * ty;
         const float skew = parameters.tangential_coeffs[2];
-        const auto image_point = glm::fvec2{
+        const auto native_image_point = glm::fvec2{
             parameters.focal_length[0] * xd +
                 skew * yd + parameters.principal_point[0],
             parameters.focal_length[1] * yd +
                 parameters.principal_point[1]};
+        const auto image_point =
+            native_image_point_to_stored(native_image_point);
 
         auto valid = isfinite(image_point.x) && isfinite(image_point.y);
         valid &= image_point_in_image_bounds_margin(
@@ -970,12 +1037,16 @@ struct RationalCameraModel
             return {image_point, {}, false};
         }
 
-        const auto dimage_dx = glm::fvec2{
+        const auto native_dimage_dx = glm::fvec2{
             parameters.focal_length[0] * dxd_dx + skew * dyd_dx,
             parameters.focal_length[1] * dyd_dx};
-        const auto dimage_dy = glm::fvec2{
+        const auto native_dimage_dy = glm::fvec2{
             parameters.focal_length[0] * dxd_dy + skew * dyd_dy,
             parameters.focal_length[1] * dyd_dy};
+        const auto dimage_dx =
+            native_image_jacobian_to_stored(native_dimage_dx);
+        const auto dimage_dy =
+            native_image_jacobian_to_stored(native_dimage_dy);
 
         std::array<glm::fvec2, 3> jacobian_camera_point = {};
         jacobian_camera_point[0] = dimage_dx * inv_z;
@@ -988,12 +1059,14 @@ struct RationalCameraModel
 
     inline __host__ __device__ glm::fvec2 compute_undistortion_newton(
         glm::fvec2 const& image_point, bool& converged) const {
+        const auto native_image_point =
+            stored_image_point_to_native(image_point);
         const float skew = parameters.tangential_coeffs[2];
         const float yd_target =
-            (image_point.y - parameters.principal_point[1]) /
+            (native_image_point.y - parameters.principal_point[1]) /
             parameters.focal_length[1];
         const float xd_target =
-            (image_point.x - parameters.principal_point[0] -
+            (native_image_point.x - parameters.principal_point[0] -
              skew * yd_target) /
             parameters.focal_length[0];
 

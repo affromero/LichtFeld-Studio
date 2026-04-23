@@ -446,7 +446,7 @@ namespace lfs::training {
                 _params.optimization.mask_threshold,
                 nullptr);
 
-        if (cam->is_undistort_prepared()) {
+        if (_params.optimization.undistort && cam->is_undistort_prepared()) {
             const auto scaled = lfs::core::scale_undistort_params(
                 cam->undistort_params(),
                 static_cast<int>(normalized_W),
@@ -460,7 +460,8 @@ namespace lfs::training {
     }
 
     auto MetricsEvaluator::make_dataloader(std::shared_ptr<CameraDataset> dataset, const int workers) const {
-        return create_dataloader_from_dataset(dataset, workers);
+        return create_dataloader_from_dataset<SequentialSampler>(
+            dataset, workers);
     }
 
     namespace {

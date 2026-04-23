@@ -33,6 +33,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,     // optional
         const float* tangential_coeffs, // optional
         const float* thin_prism_coeffs, // optional
+        const int32_t* image_rotation_quadrants_cw, // [C] optional
         // outputs
         int32_t* radii,       // [C, N, 2]
         float* means2d,       // [C, N, 2]

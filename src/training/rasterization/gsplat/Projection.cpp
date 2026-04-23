@@ -33,6 +33,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,
         const float* tangential_coeffs,
         const float* thin_prism_coeffs,
+        const int32_t* image_rotation_quadrants_cw,
         int32_t* radii,
         float* means2d,
         float* depths,
@@ -60,6 +61,7 @@ namespace gsplat_lfs {
             eps2d, near_plane, far_plane, radius_clip,
             camera_model, ut_params, rs_type,
             radial_coeffs, tangential_coeffs, thin_prism_coeffs,
+            image_rotation_quadrants_cw,
             radii, means2d, depths, conics, compensations,
             stream);
     }

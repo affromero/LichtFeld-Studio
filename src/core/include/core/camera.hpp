@@ -31,7 +31,8 @@ namespace lfs::core {
                const std::filesystem::path& mask_path,
                int camera_width, int camera_height,
                int uid,
-               int camera_id = 0);
+               int camera_id = 0,
+               int image_rotation_quadrants_cw = 0);
         Camera(const Camera&, const Tensor& transform);
 
         // Destructor to clean up CUDA stream
@@ -106,6 +107,9 @@ namespace lfs::core {
         void set_has_alpha(bool v) noexcept { _has_alpha = v; }
         int uid() const noexcept { return _uid; }
         int camera_id() const noexcept { return _camera_id; }
+        int image_rotation_quadrants_cw() const noexcept {
+            return _image_rotation_quadrants_cw;
+        }
         bool needs_raw_rational_orientation_correction(
             int loaded_width,
             int loaded_height) const noexcept;
@@ -150,6 +154,7 @@ namespace lfs::core {
         int _camera_height = 0;
         int _image_width = 0;
         int _image_height = 0;
+        int _image_rotation_quadrants_cw = 0;
 
         // GPU tensors (computed on demand)
         Tensor _world_view_transform;

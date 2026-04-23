@@ -61,9 +61,11 @@ namespace lfs::training {
         const float* radial_ptr = nullptr;
         const float* tangential_ptr = nullptr;
         const float* thin_prism_ptr = nullptr;
+        const int32_t* image_rotation_ptr = nullptr;
         lfs::core::Tensor radial_cuda;
         lfs::core::Tensor tangential_cuda;
         lfs::core::Tensor thin_prism_cuda;
+        lfs::core::Tensor image_rotation_cuda;
 
         // Dimensions
         uint32_t N = 0;

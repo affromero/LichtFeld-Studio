@@ -188,7 +188,7 @@ namespace lfs::training {
                     lfs::io::cuda::launch_mask_threshold(mask_ptr, H, W, opt_params.mask_threshold, nullptr);
                 }
 
-                if (camera.is_undistort_prepared()) {
+                if (opt_params.undistort && camera.is_undistort_prepared()) {
                     const auto scaled = lfs::core::scale_undistort_params(
                         camera.undistort_params(),
                         static_cast<int>(W),
@@ -254,7 +254,7 @@ namespace lfs::training {
                         nullptr);
                 }
 
-                if (camera.is_undistort_prepared()) {
+                if (opt_params.undistort && camera.is_undistort_prepared()) {
                     const auto scaled = lfs::core::scale_undistort_params(
                         camera.undistort_params(),
                         static_cast<int>(normalized_W),
@@ -295,7 +295,10 @@ namespace lfs::training {
             try {
                 inputs.gt_image = loader->load_image_immediate(
                     camera.image_path(),
-                    make_metrics_load_params(gt_config, camera, true));
+                    make_metrics_load_params(
+                        gt_config,
+                        camera,
+                        opt_params.undistort));
                 inputs.gt_image = camera.normalize_loaded_image_orientation(
                     std::move(inputs.gt_image));
             } catch (const std::exception& e) {
@@ -3503,6 +3506,7 @@ namespace lfs::training {
                              mask_pipeline_config.invert_masks, mask_pipeline_config.mask_threshold);
                 }
             }
+            mask_pipeline_config.apply_undistort = params_.optimization.undistort;
 
             auto train_dataloader = create_infinite_pipelined_dataloader(
                 train_dataset_, pipelined_config, mask_pipeline_config);

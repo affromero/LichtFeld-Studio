@@ -15,6 +15,7 @@ namespace lfs::core {
         float dst_fx, dst_fy, dst_cx, dst_cy;
         int src_width, src_height;
         int dst_width, dst_height;
+        int image_rotation_quadrants_cw;
         CameraModelType model_type;
         float distortion[12];
         int num_distortion;
@@ -24,7 +25,9 @@ namespace lfs::core {
         float fx, float fy, float cx, float cy,
         int width, int height,
         const Tensor& radial, const Tensor& tangential,
-        CameraModelType model, float blank_pixels = 0.0f);
+        CameraModelType model,
+        int image_rotation_quadrants_cw = 0,
+        float blank_pixels = 0.0f);
 
     UndistortParams scale_undistort_params(
         const UndistortParams& params, const int actual_src_width, const int actual_src_height);

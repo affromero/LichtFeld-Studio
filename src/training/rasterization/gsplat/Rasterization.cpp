@@ -41,6 +41,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,
         const float* tangential_coeffs,
         const float* thin_prism_coeffs,
+        const int32_t* image_rotation_quadrants_cw,
         const int32_t* tile_offsets,
         const int32_t* flatten_ids,
         float* renders,
@@ -65,6 +66,7 @@ namespace gsplat_lfs {
             viewmats0, viewmats1, Ks, camera_model,                  \
             ut_params, rs_type,                                      \
             radial_coeffs, tangential_coeffs, thin_prism_coeffs,     \
+            image_rotation_quadrants_cw,                             \
             tile_offsets, flatten_ids,                               \
             renders, alphas, last_ids, stream);                      \
         break;
@@ -125,6 +127,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,
         const float* tangential_coeffs,
         const float* thin_prism_coeffs,
+        const int32_t* image_rotation_quadrants_cw,
         const int32_t* tile_offsets,
         const int32_t* flatten_ids,
         const float* render_alphas,
@@ -164,6 +167,7 @@ namespace gsplat_lfs {
             viewmats0, viewmats1, Ks, camera_model,                  \
             ut_params, rs_type,                                      \
             radial_coeffs, tangential_coeffs, thin_prism_coeffs,     \
+            image_rotation_quadrants_cw,                             \
             tile_offsets, flatten_ids,                               \
             render_alphas, last_ids,                                 \
             v_render_colors, v_render_alphas,                        \
@@ -234,6 +238,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,
         const float* tangential_coeffs,
         const float* thin_prism_coeffs,
+        const int32_t* image_rotation_quadrants_cw,
         RasterizeWithSHResult& result,
         cudaStream_t stream) {
         GSPLAT_CHECK_CUDA_PTR(means, "means");
@@ -266,6 +271,7 @@ namespace gsplat_lfs {
             calc_compensations, camera_model,
             ut_params, rs_type,
             radial_coeffs, tangential_coeffs, thin_prism_coeffs,
+            image_rotation_quadrants_cw,
             result.radii, result.means2d, result.depths, result.conics,
             result.compensations, stream);
 
@@ -305,6 +311,7 @@ namespace gsplat_lfs {
             viewmats0, viewmats1, Ks, camera_model,
             ut_params, rs_type,
             radial_coeffs, tangential_coeffs, thin_prism_coeffs,
+            image_rotation_quadrants_cw,
             result.tile_offsets, result.flatten_ids,
             result.render_colors, result.render_alphas, result.last_ids,
             stream);
@@ -346,6 +353,7 @@ namespace gsplat_lfs {
         const float* radial_coeffs,
         const float* tangential_coeffs,
         const float* thin_prism_coeffs,
+        const int32_t* image_rotation_quadrants_cw,
         const float* render_alphas,
         const int32_t* last_ids,
         const int32_t* tile_offsets,
@@ -388,6 +396,7 @@ namespace gsplat_lfs {
             viewmats0, viewmats1, Ks, camera_model,
             ut_params, rs_type,
             radial_coeffs, tangential_coeffs, thin_prism_coeffs,
+            image_rotation_quadrants_cw,
             tile_offsets, flatten_ids,
             render_alphas, last_ids,
             v_render_colors, v_render_alphas,
