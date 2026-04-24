@@ -706,8 +706,8 @@ lfs::core::args::parse_args_and_params(int argc, const char* const argv[]) {
     }
 
     auto parse_result = parse_arguments(args, *params);
-    const std::string& strategy = params->optimization.strategy;
-    const std::string& config_file = params->optimization.config_file;
+    const std::string strategy = params->optimization.strategy;
+    const std::string config_file = params->optimization.config_file;
 
     if (!parse_result) {
         return std::unexpected(parse_result.error());
@@ -725,6 +725,7 @@ lfs::core::args::parse_args_and_params(int argc, const char* const argv[]) {
             return std::unexpected(std::format("Config load failed: {}", opt_result.error()));
         }
         params->optimization = *opt_result;
+        params->optimization.config_file = config_file;
 
         if (!strategy.empty() &&
             !lfs::core::param::strategy_names_match(strategy, params->optimization.strategy)) {

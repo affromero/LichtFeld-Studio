@@ -71,6 +71,23 @@ namespace lfs::app {
                         checkpoint_params.dataset.output_path = params->dataset.output_path;
                     if (!params->dataset.output_name.empty())
                         checkpoint_params.dataset.output_name = params->dataset.output_name;
+                    if (!params->optimization.config_file.empty()) {
+                        LOG_INFO(
+                            "Applying safe resume schedule overrides from config: {}",
+                            params->optimization.config_file);
+                        checkpoint_params.optimization.iterations = params->optimization.iterations;
+                        checkpoint_params.optimization.eval_steps = params->optimization.eval_steps;
+                        checkpoint_params.optimization.save_steps = params->optimization.save_steps;
+                        checkpoint_params.optimization.enable_eval = params->optimization.enable_eval;
+                        checkpoint_params.optimization.enable_save_eval_images = params->optimization.enable_save_eval_images;
+                        checkpoint_params.optimization.headless = params->optimization.headless;
+                        checkpoint_params.optimization.auto_train = params->optimization.auto_train;
+                        checkpoint_params.optimization.no_splash = params->optimization.no_splash;
+                        checkpoint_params.optimization.no_interop = params->optimization.no_interop;
+                        checkpoint_params.optimization.debug_python = params->optimization.debug_python;
+                        checkpoint_params.optimization.debug_python_port = params->optimization.debug_python_port;
+                        checkpoint_params.optimization.config_file = params->optimization.config_file;
+                    }
 
                     if (checkpoint_params.dataset.data_path.empty()) {
                         LOG_ERROR("Checkpoint has no dataset path and none provided via --data-path");

@@ -54,9 +54,14 @@ namespace lfs::training {
             // Build K directly from intrinsics to avoid extra CUDA->CPU->CUDA roundtrips.
             const auto [fx, fy, cx, cy] = viewpoint_camera.get_intrinsics();
             float k00 = fx;
+            float k01 = 0.0f;
+            float k10 = 0.0f;
             float k11 = fy;
             float k02 = cx - static_cast<float>(tile_x_offset);
             float k12 = cy - static_cast<float>(tile_y_offset);
+            float k20 = 0.0f;
+            float k21 = 0.0f;
+            float k22 = 1.0f;
 
             // For equirectangular cameras in tile mode, encode tile info in K matrix.
             // The CUDA kernels read these values as:
@@ -69,6 +74,13 @@ namespace lfs::training {
                 k11 = static_cast<float>(full_image_height);
                 k02 = static_cast<float>(tile_x_offset);
                 k12 = static_cast<float>(tile_y_offset);
+            } else if (camera_model == CameraModelType::RATIONAL) {
+                k01 = static_cast<float>(tile_x_offset);
+                k10 = static_cast<float>(tile_y_offset);
+                k02 = cx;
+                k12 = cy;
+                k20 = static_cast<float>(full_image_width);
+                k21 = static_cast<float>(full_image_height);
             }
 
             core::Tensor K_tensor;
@@ -101,9 +113,9 @@ namespace lfs::training {
             }
             cached_K_tensor.set_stream(fwd_stream);
             const std::array<float, 9> K_host = {
-                k00, 0.0f, k02,
-                0.0f, k11, k12,
-                0.0f, 0.0f, 1.0f};
+                k00, k01, k02,
+                k10, k11, k12,
+                k20, k21, k22};
             cudaMemcpyAsync(
                 cached_K_tensor.ptr<float>(),
                 K_host.data(),

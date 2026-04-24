@@ -770,6 +770,8 @@ struct RationalCameraModel
         std::array<float, 2> focal_length;
         std::array<float, 8> rational_coeffs = {0.f};   // b1,b2,b3,d1,d2,d3,a1,a2
         std::array<float, 3> tangential_coeffs = {0.f}; // p1,p2,skew
+        std::array<uint32_t, 2> full_resolution = {0, 0};
+        std::array<float, 2> stored_tile_offset = {0.f, 0.f};
         int image_rotation_quadrants_cw = 0;
     };
 
@@ -792,42 +794,69 @@ struct RationalCameraModel
 
     inline __host__ __device__ glm::fvec2 stored_image_point_to_native(
         glm::fvec2 const& image_point) const {
-        const float stored_width = static_cast<float>(parameters.resolution[0]);
-        const float stored_height = static_cast<float>(parameters.resolution[1]);
+        const float stored_width = static_cast<float>(
+            parameters.full_resolution[0] == 0
+                ? parameters.resolution[0]
+                : parameters.full_resolution[0]);
+        const float stored_height = static_cast<float>(
+            parameters.full_resolution[1] == 0
+                ? parameters.resolution[1]
+                : parameters.full_resolution[1]);
+        const glm::fvec2 full_image_point = {
+            image_point.x + parameters.stored_tile_offset[0],
+            image_point.y + parameters.stored_tile_offset[1]};
         switch (normalized_image_rotation_quadrants()) {
         case 1:
-            return {image_point.y, (stored_width - 1.f) - image_point.x};
+            return {
+                full_image_point.y,
+                (stored_width - 1.f) - full_image_point.x};
         case 2:
             return {
-                (stored_width - 1.f) - image_point.x,
-                (stored_height - 1.f) - image_point.y};
+                (stored_width - 1.f) - full_image_point.x,
+                (stored_height - 1.f) - full_image_point.y};
         case 3:
-            return {(stored_height - 1.f) - image_point.y, image_point.x};
+            return {
+                (stored_height - 1.f) - full_image_point.y,
+                full_image_point.x};
         default:
-            return image_point;
+            return full_image_point;
         }
     }
 
     inline __host__ __device__ glm::fvec2 native_image_point_to_stored(
         glm::fvec2 const& native_image_point) const {
-        const float stored_width = static_cast<float>(parameters.resolution[0]);
-        const float stored_height = static_cast<float>(parameters.resolution[1]);
+        const float stored_width = static_cast<float>(
+            parameters.full_resolution[0] == 0
+                ? parameters.resolution[0]
+                : parameters.full_resolution[0]);
+        const float stored_height = static_cast<float>(
+            parameters.full_resolution[1] == 0
+                ? parameters.resolution[1]
+                : parameters.full_resolution[1]);
+        glm::fvec2 stored_image_point;
         switch (normalized_image_rotation_quadrants()) {
         case 1:
-            return {
+            stored_image_point = {
                 (stored_width - 1.f) - native_image_point.y,
                 native_image_point.x};
+            break;
         case 2:
-            return {
+            stored_image_point = {
                 (stored_width - 1.f) - native_image_point.x,
                 (stored_height - 1.f) - native_image_point.y};
+            break;
         case 3:
-            return {
+            stored_image_point = {
                 native_image_point.y,
                 (stored_height - 1.f) - native_image_point.x};
+            break;
         default:
-            return native_image_point;
+            stored_image_point = native_image_point;
+            break;
         }
+        return {
+            stored_image_point.x - parameters.stored_tile_offset[0],
+            stored_image_point.y - parameters.stored_tile_offset[1]};
     }
 
     inline __host__ __device__ glm::fvec2 native_image_jacobian_to_stored(
