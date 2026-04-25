@@ -3508,8 +3508,17 @@ namespace lfs::training {
             }
             mask_pipeline_config.apply_undistort = params_.optimization.undistort;
 
+            if (params_.optimization.seed != 0) {
+                LOG_INFO("Training dataloader uses deterministic seed {}", params_.optimization.seed);
+            } else {
+                LOG_WARN("Training dataloader uses non-deterministic sampling because seed is 0");
+            }
+
             auto train_dataloader = create_infinite_pipelined_dataloader(
-                train_dataset_, pipelined_config, mask_pipeline_config);
+                train_dataset_,
+                pipelined_config,
+                mask_pipeline_config,
+                params_.optimization.seed);
             auto active_image_loader_guard = makeScopeGuard([this]() {
                 clearActiveImageLoader();
             });
