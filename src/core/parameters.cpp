@@ -187,6 +187,19 @@ namespace lfs::core {
             opt_json["ppisp_freeze_gaussians_on_distill"] = ppisp_freeze_gaussians_on_distill;
             opt_json["ppisp_controller_activation_step"] = ppisp_controller_activation_step;
             opt_json["ppisp_controller_lr"] = ppisp_controller_lr;
+            opt_json["use_depth_loss"] = use_depth_loss;
+            static constexpr const char* DEPTH_LOSS_TYPE_NAMES[] = {
+                "none",
+                "l1",
+                "log_l1",
+                "edge_aware_log_l1",
+                "pearson"};
+            opt_json["depth_loss_type"] =
+                DEPTH_LOSS_TYPE_NAMES[static_cast<int>(depth_loss_type)];
+            opt_json["depth_lambda"] = depth_lambda;
+            opt_json["depth_tolerance"] = depth_tolerance;
+            opt_json["depth_warmup_iterations"] = depth_warmup_iterations;
+            opt_json["use_depth_confidence"] = use_depth_confidence;
             opt_json["prune_opacity"] = prune_opacity;
             opt_json["grow_scale3d"] = grow_scale3d;
             opt_json["grow_scale2d"] = grow_scale2d;
@@ -249,6 +262,20 @@ namespace lfs::core {
                 return "GUT and igs+ strategy cannot be used together";
             if (ppisp_freeze_from_sidecar && !use_ppisp)
                 return "PPISP sidecar freeze requires PPISP enabled";
+            if (use_depth_loss || depth_loss_type != DepthLossType::None) {
+                if (!gut)
+                    return "Depth loss currently requires GUT rasterization";
+                if (depth_loss_type == DepthLossType::None)
+                    return "Depth loss enabled but depth_loss_type is none";
+                if (depth_loss_type == DepthLossType::Pearson)
+                    return "Pearson depth loss is not implemented for sensor depth";
+                if (depth_lambda <= 0.0f)
+                    return "Depth loss requires depth_lambda > 0";
+                if (depth_tolerance < 0.0f)
+                    return "Depth loss requires depth_tolerance >= 0";
+                if (depth_warmup_iterations < 0)
+                    return "Depth loss requires depth_warmup_iterations >= 0";
+            }
             return {};
         }
 
@@ -466,6 +493,38 @@ namespace lfs::core {
             }
             if (json.contains("ppisp_controller_lr")) {
                 params.ppisp_controller_lr = json["ppisp_controller_lr"];
+            }
+            if (json.contains("use_depth_loss")) {
+                params.use_depth_loss = json["use_depth_loss"];
+            }
+            if (json.contains("depth_loss_type")) {
+                const std::string depth_loss_type = json["depth_loss_type"];
+                if (depth_loss_type == "none") {
+                    params.depth_loss_type = DepthLossType::None;
+                } else if (depth_loss_type == "l1") {
+                    params.depth_loss_type = DepthLossType::L1;
+                } else if (depth_loss_type == "log_l1") {
+                    params.depth_loss_type = DepthLossType::LogL1;
+                } else if (depth_loss_type == "edge_aware_log_l1") {
+                    params.depth_loss_type = DepthLossType::EdgeAwareLogL1;
+                } else if (depth_loss_type == "pearson") {
+                    params.depth_loss_type = DepthLossType::Pearson;
+                } else {
+                    LOG_WARN("Invalid depth_loss_type '{}' in JSON, using none",
+                             depth_loss_type);
+                }
+            }
+            if (json.contains("depth_lambda")) {
+                params.depth_lambda = json["depth_lambda"];
+            }
+            if (json.contains("depth_tolerance")) {
+                params.depth_tolerance = json["depth_tolerance"];
+            }
+            if (json.contains("depth_warmup_iterations")) {
+                params.depth_warmup_iterations = json["depth_warmup_iterations"];
+            }
+            if (json.contains("use_depth_confidence")) {
+                params.use_depth_confidence = json["use_depth_confidence"];
             }
             if (json.contains("prune_opacity")) {
                 params.prune_opacity = json["prune_opacity"];

@@ -35,6 +35,14 @@ namespace lfs::core {
             Random      // Random per-pixel colors each iteration
         };
 
+        enum class DepthLossType {
+            None,
+            L1,
+            LogL1,
+            EdgeAwareLogL1,
+            Pearson
+        };
+
         inline constexpr std::string_view kStrategyMCMC = "mcmc";
         inline constexpr std::string_view kStrategyMRNF = "mrnf";
         inline constexpr std::string_view kStrategyMNRFLegacy = "mnrf";
@@ -171,6 +179,14 @@ namespace lfs::core {
             bool ppisp_freeze_gaussians_on_distill = true;
             int ppisp_controller_activation_step = -1; // Negative values use the last-5000-steps default schedule
             float ppisp_controller_lr = 2e-3f;
+
+            // Sparse depth supervision from COLMAP sidecar depth maps
+            bool use_depth_loss = false;
+            DepthLossType depth_loss_type = DepthLossType::None;
+            float depth_lambda = 0.2f;
+            float depth_tolerance = 0.01f;
+            int depth_warmup_iterations = 500;
+            bool use_depth_confidence = false;
 
             // Shared densification thresholds and reset controls
             float prune_opacity = 0.005f;

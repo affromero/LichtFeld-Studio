@@ -87,6 +87,27 @@ namespace lfs::app {
                         checkpoint_params.optimization.debug_python = params->optimization.debug_python;
                         checkpoint_params.optimization.debug_python_port = params->optimization.debug_python_port;
                         checkpoint_params.optimization.config_file = params->optimization.config_file;
+                        if (params->optimization.use_depth_loss ||
+                            params->optimization.depth_loss_type !=
+                                core::param::DepthLossType::None) {
+                            checkpoint_params.optimization.use_depth_loss =
+                                params->optimization.use_depth_loss;
+                            checkpoint_params.optimization.depth_loss_type =
+                                params->optimization.depth_loss_type;
+                            checkpoint_params.optimization.depth_lambda =
+                                params->optimization.depth_lambda;
+                            checkpoint_params.optimization.depth_tolerance =
+                                params->optimization.depth_tolerance;
+                            checkpoint_params.optimization.depth_warmup_iterations =
+                                params->optimization.depth_warmup_iterations;
+                            checkpoint_params.optimization.use_depth_confidence =
+                                params->optimization.use_depth_confidence;
+                            LOG_INFO(
+                                "Applying resume depth overrides: lambda={}, tolerance={}m, warmup={} iters",
+                                checkpoint_params.optimization.depth_lambda,
+                                checkpoint_params.optimization.depth_tolerance,
+                                checkpoint_params.optimization.depth_warmup_iterations);
+                        }
                     }
 
                     if (checkpoint_params.dataset.data_path.empty()) {

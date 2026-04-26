@@ -1187,6 +1187,111 @@ namespace lfs::training {
         return {};
     }
 
+    std::expected<void, std::string> Trainer::validate_depths() {
+        const auto& opt = params_.optimization;
+        if (!opt.use_depth_loss &&
+            opt.depth_loss_type == lfs::core::param::DepthLossType::None) {
+            return {};
+        }
+        if (!params_.optimization.gut) {
+            return std::unexpected(
+                "Depth loss currently requires GUT rasterization");
+        }
+
+        size_t depths_found = 0;
+        for (const auto& cam : train_dataset_->get_split_cameras()) {
+            if (cam && cam->has_depth()) {
+                ++depths_found;
+            }
+        }
+
+        if (depths_found != train_dataset_->size()) {
+            return std::unexpected(std::format(
+                "Depth loss enabled but only {}/{} train cameras have depth "
+                "sidecars under {}/depths/",
+                depths_found,
+                train_dataset_->size(),
+                lfs::core::path_to_utf8(params_.dataset.data_path)));
+        }
+
+        LOG_INFO(
+            "Using sparse depth supervision for {} train cameras "
+            "(type={}, lambda={}, tolerance={}m, warmup={} iters)",
+            depths_found,
+            static_cast<int>(opt.depth_loss_type),
+            opt.depth_lambda,
+            opt.depth_tolerance,
+            opt.depth_warmup_iterations);
+        return {};
+    }
+
+    std::expected<Trainer::DepthLossResult, std::string>
+    Trainer::compute_depth_loss_with_gradient(
+        const lfs::core::Tensor& predicted_depth,
+        const lfs::core::Tensor& target_depth,
+        const lfs::core::Tensor& valid_mask,
+        const lfs::core::Tensor& training_mask,
+        const lfs::core::param::OptimizationParameters& opt_params) {
+
+        using namespace lfs::core;
+        constexpr float EPSILON = 1e-8f;
+
+        if (!predicted_depth.is_valid() || predicted_depth.numel() == 0) {
+            return std::unexpected("Depth loss requested but renderer returned no depth");
+        }
+        if (!target_depth.is_valid() || !valid_mask.is_valid()) {
+            return std::unexpected("Depth loss requested but target depth is missing");
+        }
+
+        Tensor pred = predicted_depth;
+        if (pred.ndim() == 2) {
+            pred = pred.unsqueeze(0);
+        }
+
+        Tensor target = target_depth;
+        if (target.ndim() == 2) {
+            target = target.unsqueeze(0);
+        }
+
+        Tensor mask = valid_mask;
+        if (mask.ndim() == 2) {
+            mask = mask.unsqueeze(0);
+        }
+        if (training_mask.is_valid() && training_mask.numel() > 0) {
+            Tensor train_mask = training_mask;
+            if (train_mask.ndim() == 2) {
+                train_mask = train_mask.unsqueeze(0);
+            }
+            mask = mask * train_mask;
+        }
+
+        const Tensor diff = pred - target;
+        const Tensor abs_diff = diff.abs();
+        const Tensor mask_sum = mask.sum().clamp_min(EPSILON);
+        const Tensor valid_fraction = mask.mean();
+
+        Tensor loss;
+        Tensor grad;
+        if (opt_params.depth_loss_type == param::DepthLossType::L1) {
+            loss = (abs_diff * mask).sum() / mask_sum;
+            grad = diff.sign() * mask / mask_sum;
+        } else if (
+            opt_params.depth_loss_type == param::DepthLossType::LogL1 ||
+            opt_params.depth_loss_type == param::DepthLossType::EdgeAwareLogL1) {
+            const Tensor denom =
+                Tensor::full_like(abs_diff, 1.0f) + abs_diff;
+            loss = (abs_diff.log1p() * mask).sum() / mask_sum;
+            grad = diff.sign() * mask / (mask_sum * denom);
+        } else {
+            return std::unexpected("Unsupported depth loss type");
+        }
+
+        return DepthLossResult{
+            .loss = loss * opt_params.depth_lambda,
+            .grad_depth = grad * opt_params.depth_lambda,
+            .valid_fraction = valid_fraction};
+    }
+
     std::expected<Trainer::MaskLossResult, std::string> Trainer::compute_photometric_loss_with_mask(
         const lfs::core::Tensor& corrected,
         const lfs::core::Tensor& gt_image,
@@ -1775,6 +1880,9 @@ namespace lfs::training {
 
             // Validate masks if mask mode is enabled
             if (auto result = validate_masks(); !result) {
+                return std::unexpected(result.error());
+            }
+            if (auto result = validate_depths(); !result) {
                 return std::unexpected(result.error());
             }
 
@@ -2564,7 +2672,29 @@ namespace lfs::training {
             } else {
                 loss_accumulator_.zero_();
             }
+            if (!photometric_loss_accumulator_.is_valid()) {
+                photometric_loss_accumulator_ =
+                    core::Tensor::zeros({1}, core::Device::CUDA);
+            } else {
+                photometric_loss_accumulator_.zero_();
+            }
+            if (!depth_loss_accumulator_.is_valid()) {
+                depth_loss_accumulator_ =
+                    core::Tensor::zeros({1}, core::Device::CUDA);
+            } else {
+                depth_loss_accumulator_.zero_();
+            }
+            if (!depth_valid_fraction_accumulator_.is_valid()) {
+                depth_valid_fraction_accumulator_ =
+                    core::Tensor::zeros({1}, core::Device::CUDA);
+            } else {
+                depth_valid_fraction_accumulator_.zero_();
+            }
             auto& loss_tensor_gpu = loss_accumulator_;
+            auto& photometric_loss_tensor_gpu = photometric_loss_accumulator_;
+            auto& depth_loss_tensor_gpu = depth_loss_accumulator_;
+            auto& depth_valid_fraction_tensor_gpu =
+                depth_valid_fraction_accumulator_;
             RenderOutput r_output;
             int tiles_processed = 0;
 
@@ -2591,6 +2721,12 @@ namespace lfs::training {
                 densification_type = DensificationType::MCMC;
             else if (core::param::is_mrnf_strategy(params_.optimization.strategy))
                 densification_type = DensificationType::MRNF;
+            const bool depth_loss_active =
+                !in_controller_phase &&
+                params_.optimization.use_depth_loss &&
+                params_.optimization.depth_loss_type !=
+                    lfs::core::param::DepthLossType::None &&
+                iter > params_.optimization.depth_warmup_iterations;
 
             // Loop over tiles (row-major order)
             for (int tile_idx = 0; tile_idx < num_tiles; ++tile_idx) {
@@ -2642,10 +2778,14 @@ namespace lfs::training {
                 if (params_.optimization.gut) {
                     const int tw = (num_tiles > 1) ? tile_width : 0;
                     const int th = (num_tiles > 1) ? tile_height : 0;
+                    const GsplatRenderMode gsplat_render_mode =
+                        depth_loss_active
+                            ? GsplatRenderMode::RGB_ED
+                            : GsplatRenderMode::RGB;
                     auto rasterize_result = gsplat_rasterize_forward(
                         *cam, strategy_->get_model(), bg,
                         tile_x_offset, tile_y_offset, tw, th,
-                        1.0f, false, GsplatRenderMode::RGB, true, bg_tile);
+                        1.0f, false, gsplat_render_mode, true, bg_tile);
 
                     if (!rasterize_result) {
                         nvtxRangePop(); // rasterize_forward
@@ -2800,6 +2940,8 @@ namespace lfs::training {
                         tile_grad = result->grad_corrected;
                     }
 
+                    photometric_loss_tensor_gpu =
+                        photometric_loss_tensor_gpu + tile_loss;
                     loss_tensor_gpu = loss_tensor_gpu + tile_loss;
                     tiles_processed++;
                     nvtxRangePop(); // compute_photometric_loss
@@ -2845,6 +2987,8 @@ namespace lfs::training {
                     lfs::core::Tensor tile_grad;
                     lfs::core::Tensor tile_grad_raw;
                     lfs::core::Tensor tile_grad_alpha;
+                    lfs::core::Tensor tile_grad_depth;
+                    lfs::core::Tensor tile_grad_depth_alpha;
                     lfs::core::Tensor tile_error_map;
                     lfs::core::Tensor mask_tile;
 
@@ -2896,6 +3040,67 @@ namespace lfs::training {
                         tile_loss = result->loss;
                         tile_grad = result->grad_corrected;
                         tile_grad_raw = result->grad_raw;
+                    }
+
+                    photometric_loss_tensor_gpu =
+                        photometric_loss_tensor_gpu + tile_loss;
+
+                    if (depth_loss_active) {
+                        if (!pipelined_depth_.is_valid() ||
+                            !pipelined_depth_valid_mask_.is_valid()) {
+                            nvtxRangePop();
+                            nvtxRangePop();
+                            return std::unexpected(
+                                "Depth loss active but no pipelined depth was loaded");
+                        }
+
+                        lfs::core::Tensor depth_tile = pipelined_depth_;
+                        lfs::core::Tensor depth_valid_tile =
+                            pipelined_depth_valid_mask_;
+                        if (num_tiles > 1 && pipelined_depth_.ndim() == 2) {
+                            auto tile_h = pipelined_depth_.slice(
+                                0,
+                                tile_y_offset,
+                                tile_y_offset + tile_height);
+                            depth_tile = tile_h.slice(
+                                1,
+                                tile_x_offset,
+                                tile_x_offset + tile_width);
+
+                            auto valid_tile_h =
+                                pipelined_depth_valid_mask_.slice(
+                                    0,
+                                    tile_y_offset,
+                                    tile_y_offset + tile_height);
+                            depth_valid_tile = valid_tile_h.slice(
+                                1,
+                                tile_x_offset,
+                                tile_x_offset + tile_width);
+                        }
+
+                        auto depth_result = compute_depth_loss_with_gradient(
+                            output.depth,
+                            depth_tile,
+                            depth_valid_tile,
+                            mask_tile,
+                            params_.optimization);
+                        if (!depth_result) {
+                            nvtxRangePop();
+                            nvtxRangePop();
+                            return std::unexpected(depth_result.error());
+                        }
+                        tile_loss = tile_loss + depth_result->loss;
+                        depth_loss_tensor_gpu =
+                            depth_loss_tensor_gpu + depth_result->loss;
+                        depth_valid_fraction_tensor_gpu =
+                            depth_valid_fraction_tensor_gpu +
+                            depth_result->valid_fraction;
+                        const auto alpha_safe = output.alpha.clamp_min(1e-10f);
+                        tile_grad_depth =
+                            (depth_result->grad_depth / alpha_safe).contiguous();
+                        tile_grad_depth_alpha =
+                            (-depth_result->grad_depth * output.depth / alpha_safe)
+                                .contiguous();
                     }
 
                     // 2) Extract error map from workspace's ssim_map
@@ -3060,6 +3265,30 @@ namespace lfs::training {
                     if (tile_grad_raw.is_valid() && tile_grad_raw.numel() > 0) {
                         raster_grad = raster_grad + tile_grad_raw;
                     }
+                    if (tile_grad_depth.is_valid() &&
+                        tile_grad_depth.numel() > 0) {
+                        if (raster_grad.ndim() != 3 ||
+                            tile_grad_depth.ndim() != 3 ||
+                            raster_grad.shape()[1] != tile_grad_depth.shape()[1] ||
+                            raster_grad.shape()[2] != tile_grad_depth.shape()[2]) {
+                            return std::unexpected(
+                                "Depth gradient shape does not match RGB gradient shape");
+                        }
+                        raster_grad =
+                            lfs::core::Tensor::cat(
+                                {raster_grad.contiguous(), tile_grad_depth},
+                                0);
+                    }
+                    if (tile_grad_depth_alpha.is_valid() &&
+                        tile_grad_depth_alpha.numel() > 0) {
+                        if (tile_grad_alpha.is_valid() &&
+                            tile_grad_alpha.numel() > 0) {
+                            tile_grad_alpha =
+                                tile_grad_alpha + tile_grad_depth_alpha;
+                        } else {
+                            tile_grad_alpha = tile_grad_depth_alpha;
+                        }
+                    }
 
                     nvtxRangePush("rasterize_backward");
                     if (gsplat_ctx) {
@@ -3085,6 +3314,15 @@ namespace lfs::training {
 
             if (tiles_processed > 1)
                 loss_tensor_gpu = loss_tensor_gpu / static_cast<float>(tiles_processed);
+            if (tiles_processed > 1) {
+                photometric_loss_tensor_gpu =
+                    photometric_loss_tensor_gpu / static_cast<float>(tiles_processed);
+                depth_loss_tensor_gpu =
+                    depth_loss_tensor_gpu / static_cast<float>(tiles_processed);
+                depth_valid_fraction_tensor_gpu =
+                    depth_valid_fraction_tensor_gpu /
+                    static_cast<float>(tiles_processed);
+            }
 
             if (tiles_processed == 0) {
                 LOG_DEBUG("Skipping iteration {} - no visible primitives", iter);
@@ -3199,6 +3437,24 @@ namespace lfs::training {
                 }
 
                 current_loss_ = loss_value;
+                const float photometric_value =
+                    photometric_loss_tensor_gpu.is_valid()
+                        ? photometric_loss_tensor_gpu.item<float>()
+                        : 0.0f;
+                const float depth_value =
+                    depth_loss_tensor_gpu.is_valid()
+                        ? depth_loss_tensor_gpu.item<float>()
+                        : 0.0f;
+                const float depth_valid_value =
+                    depth_valid_fraction_tensor_gpu.is_valid()
+                        ? depth_valid_fraction_tensor_gpu.item<float>()
+                        : 0.0f;
+                LOG_INFO(
+                    "Loss components {} | Photometric: {:.6f} | Depth: {:.6f} | Depth Valid: {:.6f}",
+                    iter,
+                    photometric_value,
+                    depth_value,
+                    depth_valid_value);
                 if (progress_) {
                     progress_->update(
                         iter,
@@ -3507,6 +3763,16 @@ namespace lfs::training {
                 }
             }
             mask_pipeline_config.apply_undistort = params_.optimization.undistort;
+            PipelinedDepthConfig depth_pipeline_config;
+            depth_pipeline_config.load_depths =
+                params_.optimization.use_depth_loss &&
+                params_.optimization.depth_loss_type !=
+                    lfs::core::param::DepthLossType::None;
+            depth_pipeline_config.depth_tolerance =
+                params_.optimization.depth_tolerance;
+            if (depth_pipeline_config.load_depths) {
+                LOG_INFO("Depth sidecar loading enabled for training");
+            }
 
             if (params_.optimization.seed != 0) {
                 LOG_INFO("Training dataloader uses deterministic seed {}", params_.optimization.seed);
@@ -3518,6 +3784,7 @@ namespace lfs::training {
                 train_dataset_,
                 pipelined_config,
                 mask_pipeline_config,
+                depth_pipeline_config,
                 params_.optimization.seed);
             auto active_image_loader_guard = makeScopeGuard([this]() {
                 clearActiveImageLoader();
@@ -3569,6 +3836,12 @@ namespace lfs::training {
 
                 // Store pipelined mask for use in train_step
                 pipelined_mask_ = example.mask.has_value() ? std::move(*example.mask) : lfs::core::Tensor();
+                pipelined_depth_ =
+                    example.depth.has_value() ? std::move(*example.depth) : lfs::core::Tensor();
+                pipelined_depth_valid_mask_ =
+                    example.depth_valid_mask.has_value()
+                        ? std::move(*example.depth_valid_mask)
+                        : lfs::core::Tensor();
 
                 if (memory_breakdown_enabled_ && !memory_breakdown_logged_first_batch_) {
                     const auto snapshot = capture_vram_snapshot(true);

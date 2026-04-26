@@ -15,6 +15,11 @@
 
 namespace lfs::core {
 
+    struct DepthMap {
+        Tensor depth;
+        Tensor valid_mask;
+    };
+
     class LFS_CORE_API Camera {
     public:
         Camera() = default;
@@ -29,6 +34,7 @@ namespace lfs::core {
                const std::string& image_name,
                const std::filesystem::path& image_path,
                const std::filesystem::path& mask_path,
+               const std::filesystem::path& depth_path,
                int camera_width, int camera_height,
                int uid,
                int camera_id = 0,
@@ -53,6 +59,8 @@ namespace lfs::core {
         // Load mask from disk, process it, and return it (cached)
         Tensor load_and_get_mask(int resize_factor = -1, int max_width = 3840,
                                  bool invert_mask = false, float mask_threshold = 0.5f);
+
+        DepthMap load_and_get_depth(float depth_tolerance);
 
         // Load image from disk just to populate _image_width/_image_height
         void load_image_size(int resize_factor = -1, int max_width = 3840);
@@ -102,7 +110,9 @@ namespace lfs::core {
         const std::string& image_name() const noexcept { return _image_name; }
         const std::filesystem::path& image_path() const noexcept { return _image_path; }
         const std::filesystem::path& mask_path() const noexcept { return _mask_path; }
+        const std::filesystem::path& depth_path() const noexcept { return _depth_path; }
         bool has_mask() const noexcept { return !_mask_path.empty() && std::filesystem::exists(_mask_path); }
+        bool has_depth() const noexcept { return !_depth_path.empty() && std::filesystem::exists(_depth_path); }
         bool has_alpha() const noexcept { return _has_alpha; }
         void set_has_alpha(bool v) noexcept { _has_alpha = v; }
         int uid() const noexcept { return _uid; }
@@ -115,6 +125,7 @@ namespace lfs::core {
             int loaded_height) const noexcept;
         Tensor normalize_loaded_image_orientation(Tensor image) const;
         Tensor normalize_loaded_mask_orientation(Tensor mask) const;
+        Tensor normalize_loaded_depth_orientation(Tensor depth) const;
 
         float FoVx() const noexcept { return _FoVx; }
         float FoVy() const noexcept { return _FoVy; }
@@ -149,6 +160,7 @@ namespace lfs::core {
         std::string _image_name;
         std::filesystem::path _image_path;
         std::filesystem::path _mask_path;
+        std::filesystem::path _depth_path;
         bool _has_alpha = false;
         int _camera_width = 0;
         int _camera_height = 0;
@@ -163,6 +175,8 @@ namespace lfs::core {
         // Mask caching (processed mask stored on GPU)
         Tensor _cached_mask;
         bool _mask_loaded = false;
+        DepthMap _cached_depth;
+        bool _depth_loaded = false;
 
         // Undistortion state
         bool _undistort_precomputed = false;

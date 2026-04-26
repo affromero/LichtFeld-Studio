@@ -513,6 +513,132 @@ namespace gsplat_lfs {
                 compute_v_dirs ? v_dirs : nullptr);
     }
 
+    __global__ void pack_depth_render_colors_kernel(
+        const float* __restrict__ rgb_colors,
+        const float* __restrict__ depths,
+        const uint32_t total_elements,
+        const uint32_t channels,
+        float* __restrict__ colors) {
+        const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (channels == 1) {
+            if (idx < total_elements) {
+                colors[idx] = depths[idx];
+            }
+            return;
+        }
+        if (channels != 4 || idx >= total_elements * channels) {
+            return;
+        }
+
+        const uint32_t elem_id = idx / channels;
+        const uint32_t channel = idx % channels;
+        colors[idx] = channel < 3 ? rgb_colors[elem_id * 3 + channel] : depths[elem_id];
+    }
+
+    void pack_depth_render_colors(
+        const float* rgb_colors,
+        const float* depths,
+        uint32_t C,
+        uint32_t N,
+        uint32_t channels,
+        float* colors,
+        cudaStream_t stream) {
+        const uint32_t total_elements = C * N;
+        if (total_elements == 0) {
+            return;
+        }
+
+        const uint32_t n_elements = channels == 1
+                                        ? total_elements
+                                        : total_elements * channels;
+        constexpr uint32_t block_size = 256;
+        const uint32_t n_blocks = (n_elements + block_size - 1) / block_size;
+        pack_depth_render_colors_kernel<<<n_blocks, block_size, 0, stream>>>(
+            rgb_colors, depths, total_elements, channels, colors);
+    }
+
+    __global__ void extract_rgb_color_grads_kernel(
+        const float* __restrict__ v_colors,
+        const uint32_t total_elements,
+        const uint32_t channels,
+        float* __restrict__ v_rgb_colors) {
+        const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= total_elements * 3) {
+            return;
+        }
+
+        const uint32_t elem_id = idx / 3;
+        const uint32_t channel = idx % 3;
+        v_rgb_colors[idx] = channels == 3
+                                ? v_colors[idx]
+                                : v_colors[elem_id * channels + channel];
+    }
+
+    void extract_rgb_color_grads(
+        const float* v_colors,
+        uint32_t C,
+        uint32_t N,
+        uint32_t channels,
+        float* v_rgb_colors,
+        cudaStream_t stream) {
+        const uint32_t total_elements = C * N;
+        if (total_elements == 0) {
+            return;
+        }
+
+        constexpr uint32_t block_size = 256;
+        const uint32_t n_elements = total_elements * 3;
+        const uint32_t n_blocks = (n_elements + block_size - 1) / block_size;
+        extract_rgb_color_grads_kernel<<<n_blocks, block_size, 0, stream>>>(
+            v_colors, total_elements, channels, v_rgb_colors);
+    }
+
+    __global__ void accumulate_depth_color_grads_to_means_kernel(
+        const float* __restrict__ v_colors,
+        const float* __restrict__ viewmats,
+        const uint32_t C,
+        const uint32_t N,
+        const uint32_t channels,
+        float* __restrict__ v_means) {
+        const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= C * N) {
+            return;
+        }
+
+        const uint32_t camera_id = idx / N;
+        const uint32_t gaussian_id = idx % N;
+        const uint32_t depth_channel = channels == 1 ? 0 : 3;
+        const float grad_depth = v_colors[idx * channels + depth_channel];
+        if (grad_depth == 0.0f) {
+            return;
+        }
+
+        const float* viewmat = viewmats + camera_id * 16;
+        float* mean_grad = v_means + gaussian_id * 3;
+        atomicAdd(mean_grad, grad_depth * viewmat[8]);
+        atomicAdd(mean_grad + 1, grad_depth * viewmat[9]);
+        atomicAdd(mean_grad + 2, grad_depth * viewmat[10]);
+    }
+
+    void accumulate_depth_color_grads_to_means(
+        const float* v_colors,
+        const float* viewmats,
+        uint32_t C,
+        uint32_t N,
+        uint32_t channels,
+        float* v_means,
+        cudaStream_t stream) {
+        if (C * N == 0 || (channels != 1 && channels != 4)) {
+            return;
+        }
+
+        constexpr uint32_t block_size = 256;
+        const uint32_t n_elements = C * N;
+        const uint32_t n_blocks = (n_elements + block_size - 1) / block_size;
+        accumulate_depth_color_grads_to_means_kernel<<<n_blocks, block_size, 0, stream>>>(
+            v_colors, viewmats, C, N, channels, v_means);
+    }
+
     // Compute viewing directions: dir = mean - camera_position
     __global__ void compute_view_dirs_kernel(
         const float* __restrict__ means,

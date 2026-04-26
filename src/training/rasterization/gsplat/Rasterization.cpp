@@ -292,14 +292,23 @@ namespace gsplat_lfs {
             C, tile_width, tile_height,
             result.tile_offsets, stream);
 
-        // Step 3: Compute viewing directions and evaluate SH
+        // Step 3: Compute per-Gaussian render attributes.
         if (render_mode == 0 || render_mode == 3 || render_mode == 4) {
             compute_view_dirs(means, viewmats0, C, N, result.dirs, stream);
 
+            float* sh_colors = channels == 4 ? result.rgb_colors : result.colors;
             spherical_harmonics_fwd(
                 sh_degree, result.dirs, sh_coeffs, nullptr,
                 static_cast<int64_t>(C) * N, K,
-                result.colors, stream);
+                sh_colors, stream);
+        }
+        if (render_mode == 1 || render_mode == 2 || render_mode == 3 || render_mode == 4) {
+            pack_depth_render_colors(
+                channels == 4 ? result.rgb_colors : nullptr,
+                result.depths,
+                C, N, channels,
+                result.colors,
+                stream);
         }
 
         // Step 4: Rasterize to pixels
@@ -404,14 +413,27 @@ namespace gsplat_lfs {
             densification_info, densification_error_map,
             stream);
 
-        // Backward through SH
+        if (render_mode == 1 || render_mode == 2 || render_mode == 3 || render_mode == 4) {
+            accumulate_depth_color_grads_to_means(
+                v_colors, viewmats0, C, N, channels, v_means, stream);
+        }
+
+        // Backward through SH. RGB+D modes carry a fourth depth channel that
+        // must not be interpreted as an SH/color gradient.
+        float* v_rgb_colors = nullptr;
+        const float* v_sh_colors = v_colors;
+        if (render_mode == 3 || render_mode == 4) {
+            cudaMalloc(&v_rgb_colors, C * N * 3 * sizeof(float));
+            extract_rgb_color_grads(v_colors, C, N, channels, v_rgb_colors, stream);
+            v_sh_colors = v_rgb_colors;
+        }
         if (render_mode == 0 || render_mode == 3 || render_mode == 4) {
             spherical_harmonics_bwd(
                 K, sh_degree,
                 nullptr, // dirs
                 sh_coeffs,
                 nullptr, // masks
-                v_colors,
+                v_sh_colors,
                 static_cast<int64_t>(C) * N,
                 false, // compute_v_dirs
                 v_sh_coeffs,
@@ -424,6 +446,9 @@ namespace gsplat_lfs {
             // TODO: Scale v_scales by scaling_modifier
         }
 
+        if (v_rgb_colors != nullptr) {
+            cudaFree(v_rgb_colors);
+        }
         cudaFree(v_colors);
     }
 

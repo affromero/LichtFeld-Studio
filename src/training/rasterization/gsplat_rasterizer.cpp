@@ -260,13 +260,14 @@ namespace lfs::training {
             const size_t tiles_per_gauss_size = align(C * N * sizeof(int32_t));
             const size_t tile_offsets_size = align(C * num_tiles_y * num_tiles_x * sizeof(int32_t));
             const size_t colors_size = align(C * N * channels * sizeof(float));
+            const size_t rgb_colors_size = channels == 4 ? align(C * N * 3 * sizeof(float)) : 0;
             const size_t render_colors_size = align(C * H * W * channels * sizeof(float));
             const size_t render_alphas_size = align(C * H * W * sizeof(float));
             const size_t last_ids_size = align(C * H * W * sizeof(int32_t));
 
             const size_t total_size = radii_size + means2d_size + depths_size + dirs_size +
                                       conics_size + compensations_size + tiles_per_gauss_size +
-                                      tile_offsets_size + colors_size + render_colors_size +
+                                      tile_offsets_size + colors_size + rgb_colors_size + render_colors_size +
                                       render_alphas_size + last_ids_size;
 
             // Allocate from arena
@@ -295,6 +296,11 @@ namespace lfs::training {
             ptr += tile_offsets_size;
             auto* colors_ptr_out = reinterpret_cast<float*>(ptr);
             ptr += colors_size;
+            float* rgb_colors_ptr_out = nullptr;
+            if (channels == 4) {
+                rgb_colors_ptr_out = reinterpret_cast<float*>(ptr);
+                ptr += rgb_colors_size;
+            }
             auto* render_colors_ptr_out = reinterpret_cast<float*>(ptr);
             ptr += render_colors_size;
             auto* render_alphas_ptr_out = reinterpret_cast<float*>(ptr);
@@ -309,6 +315,7 @@ namespace lfs::training {
                 .means2d = means2d_ptr_out,
                 .depths = depths_ptr_out,
                 .colors = colors_ptr_out,
+                .rgb_colors = rgb_colors_ptr_out,
                 .dirs = dirs_ptr_out,
                 .conics = conics_ptr_out,
                 .tiles_per_gauss = tiles_per_gauss_ptr,
@@ -386,13 +393,13 @@ namespace lfs::training {
                 break;
 
             case GsplatRenderMode::RGB_D:
-                final_image = render_colors_tensor.slice(-1, 0, 3);
-                final_depth = render_colors_tensor.slice(-1, 3, 4);
+                final_image = render_colors_tensor.slice(3, 0, 3);
+                final_depth = render_colors_tensor.slice(3, 3, 4);
                 break;
 
             case GsplatRenderMode::RGB_ED:
-                final_image = render_colors_tensor.slice(-1, 0, 3);
-                auto accum_depth = render_colors_tensor.slice(-1, 3, 4);
+                final_image = render_colors_tensor.slice(3, 0, 3);
+                auto accum_depth = render_colors_tensor.slice(3, 3, 4);
                 final_depth = accum_depth.div(render_alphas_tensor.clamp_min(1e-10f));
                 break;
             }

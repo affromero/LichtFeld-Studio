@@ -184,6 +184,7 @@ namespace lfs::io {
                         info._image_name,
                         info._image_path,
                         mask_path,
+                        std::filesystem::path{},
                         info._width,
                         info._height,
                         static_cast<int>(i));

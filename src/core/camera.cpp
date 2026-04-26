@@ -7,10 +7,15 @@
 #include "core/image_io.hpp"
 #include "core/image_loader.hpp"
 #include "core/logger.hpp"
+#include "core/path_utils.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cuda_runtime.h>
+#include <cstring>
+#include <format>
+#include <fstream>
+#include <sstream>
 
 namespace lfs::core {
     namespace {
@@ -69,6 +74,131 @@ namespace lfs::core {
                     .to(rotated.device());
             return rotated.index_select(0, reverse_rows);
         }
+
+        [[nodiscard]] std::string trim_copy(const std::string& value) {
+            const auto begin = value.find_first_not_of(" \t\n\r");
+            if (begin == std::string::npos) {
+                return {};
+            }
+            const auto end = value.find_last_not_of(" \t\n\r");
+            return value.substr(begin, end - begin + 1);
+        }
+
+        [[nodiscard]] std::vector<size_t> parse_npy_shape(
+            const std::string& header) {
+            const auto shape_pos = header.find("'shape'");
+            if (shape_pos == std::string::npos) {
+                throw std::runtime_error("NPY header missing shape");
+            }
+            const auto open_pos = header.find('(', shape_pos);
+            const auto close_pos = header.find(')', open_pos);
+            if (open_pos == std::string::npos ||
+                close_pos == std::string::npos ||
+                close_pos <= open_pos) {
+                throw std::runtime_error("NPY header has invalid shape");
+            }
+
+            std::vector<size_t> shape;
+            std::stringstream stream(header.substr(open_pos + 1, close_pos - open_pos - 1));
+            std::string token;
+            while (std::getline(stream, token, ',')) {
+                token = trim_copy(token);
+                if (!token.empty()) {
+                    shape.push_back(static_cast<size_t>(std::stoull(token)));
+                }
+            }
+            return shape;
+        }
+
+        [[nodiscard]] DepthMap load_npy_depth_cpu(
+            const std::filesystem::path& path,
+            const float depth_tolerance) {
+            std::ifstream file(path, std::ios::binary);
+            if (!file) {
+                throw std::runtime_error(
+                    std::format("Failed to open depth map '{}'", path_to_utf8(path)));
+            }
+
+            char magic[6];
+            file.read(magic, sizeof(magic));
+            if (!file || std::memcmp(magic, "\x93NUMPY", sizeof(magic)) != 0) {
+                throw std::runtime_error(
+                    std::format("Depth map '{}' is not a NPY file", path_to_utf8(path)));
+            }
+
+            unsigned char major = 0;
+            unsigned char minor = 0;
+            file.read(reinterpret_cast<char*>(&major), 1);
+            file.read(reinterpret_cast<char*>(&minor), 1);
+            (void)minor;
+
+            uint32_t header_len = 0;
+            if (major == 1) {
+                uint16_t header_len_v1 = 0;
+                file.read(reinterpret_cast<char*>(&header_len_v1), sizeof(header_len_v1));
+                header_len = header_len_v1;
+            } else if (major == 2 || major == 3) {
+                file.read(reinterpret_cast<char*>(&header_len), sizeof(header_len));
+            } else {
+                throw std::runtime_error(
+                    std::format("Unsupported NPY version {} in '{}'",
+                                static_cast<int>(major),
+                                path_to_utf8(path)));
+            }
+
+            std::string header(header_len, '\0');
+            file.read(header.data(), static_cast<std::streamsize>(header.size()));
+            if (!file) {
+                throw std::runtime_error(
+                    std::format("Truncated NPY header in '{}'", path_to_utf8(path)));
+            }
+
+            if (header.find("'descr': '<f4'") == std::string::npos &&
+                header.find("\"descr\": \"<f4\"") == std::string::npos &&
+                header.find("'descr': '|f4'") == std::string::npos &&
+                header.find("\"descr\": \"|f4\"") == std::string::npos) {
+                throw std::runtime_error(
+                    std::format("Depth map '{}' must be float32 NPY", path_to_utf8(path)));
+            }
+            if (header.find("'fortran_order': False") == std::string::npos &&
+                header.find("\"fortran_order\": false") == std::string::npos) {
+                throw std::runtime_error(
+                    std::format("Depth map '{}' must be C-contiguous", path_to_utf8(path)));
+            }
+
+            const std::vector<size_t> shape = parse_npy_shape(header);
+            if (shape.size() != 2 || shape[0] == 0 || shape[1] == 0) {
+                throw std::runtime_error(
+                    std::format("Depth map '{}' must be 2D", path_to_utf8(path)));
+            }
+
+            const size_t height = shape[0];
+            const size_t width = shape[1];
+            const size_t count = height * width;
+            std::vector<float> depth(count);
+            file.read(
+                reinterpret_cast<char*>(depth.data()),
+                static_cast<std::streamsize>(count * sizeof(float)));
+            if (!file) {
+                throw std::runtime_error(
+                    std::format("Truncated depth data in '{}'", path_to_utf8(path)));
+            }
+
+            std::vector<float> valid(count, 0.0f);
+            for (size_t i = 0; i < count; ++i) {
+                const bool is_valid =
+                    std::isfinite(depth[i]) && depth[i] > depth_tolerance;
+                if (is_valid) {
+                    valid[i] = 1.0f;
+                } else {
+                    depth[i] = 0.0f;
+                }
+            }
+
+            return DepthMap{
+                .depth = Tensor::from_vector(depth, {height, width}, Device::CPU),
+                .valid_mask = Tensor::from_vector(valid, {height, width}, Device::CPU)};
+        }
     } // namespace
 
     static Tensor world_to_view(const Tensor& R, const Tensor& t) {
@@ -110,6 +240,7 @@ namespace lfs::core {
                    const std::string& image_name,
                    const std::filesystem::path& image_path,
                    const std::filesystem::path& mask_path,
+                   const std::filesystem::path& depth_path,
                    int camera_width, int camera_height,
                    int uid,
                    int camera_id,
@@ -128,6 +259,7 @@ namespace lfs::core {
           _image_name(image_name),
           _image_path(image_path),
           _mask_path(mask_path),
+          _depth_path(depth_path),
           _camera_width(camera_width),
           _camera_height(camera_height),
           _image_width(camera_width),
@@ -202,6 +334,7 @@ namespace lfs::core {
           _image_path(std::move(other._image_path)),
           _image_name(std::move(other._image_name)),
           _mask_path(std::move(other._mask_path)),
+          _depth_path(std::move(other._depth_path)),
           _camera_width(other._camera_width),
           _camera_height(other._camera_height),
           _image_width(other._image_width),
@@ -211,6 +344,8 @@ namespace lfs::core {
           _cam_position(std::move(other._cam_position)),
           _cached_mask(std::move(other._cached_mask)),
           _mask_loaded(other._mask_loaded),
+          _cached_depth(std::move(other._cached_depth)),
+          _depth_loaded(other._depth_loaded),
           _undistort_precomputed(other._undistort_precomputed),
           _undistort_prepared(other._undistort_prepared),
           _undistort_params(other._undistort_params),
@@ -218,6 +353,7 @@ namespace lfs::core {
         // Take ownership of the stream
         other._stream = nullptr;
         other._mask_loaded = false;
+        other._depth_loaded = false;
         other._undistort_precomputed = false;
         other._undistort_prepared = false;
     }
@@ -245,6 +381,7 @@ namespace lfs::core {
             _image_path = std::move(other._image_path);
             _image_name = std::move(other._image_name);
             _mask_path = std::move(other._mask_path);
+            _depth_path = std::move(other._depth_path);
             _camera_width = other._camera_width;
             _camera_height = other._camera_height;
             _image_width = other._image_width;
@@ -254,6 +391,8 @@ namespace lfs::core {
             _cam_position = std::move(other._cam_position);
             _cached_mask = std::move(other._cached_mask);
             _mask_loaded = other._mask_loaded;
+            _cached_depth = std::move(other._cached_depth);
+            _depth_loaded = other._depth_loaded;
             _undistort_precomputed = other._undistort_precomputed;
             _undistort_prepared = other._undistort_prepared;
             _undistort_params = other._undistort_params;
@@ -262,6 +401,7 @@ namespace lfs::core {
             _stream = other._stream;
             other._stream = nullptr;
             other._mask_loaded = false;
+            other._depth_loaded = false;
             other._undistort_precomputed = false;
             other._undistort_prepared = false;
         }
@@ -283,6 +423,7 @@ namespace lfs::core {
           _image_name(other._image_name),
           _image_path(other._image_path),
           _mask_path(other._mask_path),
+          _depth_path(other._depth_path),
           _camera_width(other._camera_width),
           _camera_height(other._camera_height),
           _image_width(other._image_width),
@@ -381,6 +522,29 @@ namespace lfs::core {
             loaded_width,
             loaded_height);
         return rotate_image_hw_ccw_90(std::move(mask));
+    }
+
+    Tensor Camera::normalize_loaded_depth_orientation(Tensor depth) const {
+        if (depth.ndim() != 2) {
+            return depth;
+        }
+
+        const int loaded_width = static_cast<int>(depth.shape()[1]);
+        const int loaded_height = static_cast<int>(depth.shape()[0]);
+        if (!needs_raw_rational_orientation_correction(
+                loaded_width, loaded_height)) {
+            return depth;
+        }
+
+        LOG_DEBUG(
+            "Rotating raw rational depth '{}' 90 deg CCW to match {}x{} camera "
+            "model from loaded {}x{} tensor",
+            _image_name,
+            _camera_width,
+            _camera_height,
+            loaded_width,
+            loaded_height);
+        return rotate_image_hw_ccw_90(std::move(depth));
     }
 
     Tensor Camera::load_and_get_image(int resize_factor, int max_width) {
@@ -554,6 +718,59 @@ namespace lfs::core {
         LOG_DEBUG("Loaded mask for {}: [{},{}]", _image_name, mask.shape()[0], mask.shape()[1]);
 
         return _cached_mask;
+    }
+
+    DepthMap Camera::load_and_get_depth(const float depth_tolerance) {
+        if (_depth_loaded &&
+            _cached_depth.depth.is_valid() &&
+            _cached_depth.valid_mask.is_valid()) {
+            return _cached_depth;
+        }
+
+        if (_depth_path.empty() || !std::filesystem::exists(_depth_path)) {
+            return {};
+        }
+        if (_undistort_prepared) {
+            throw std::runtime_error(
+                "Depth loss with undistorted cameras is not supported yet");
+        }
+
+        auto depth_map = load_npy_depth_cpu(_depth_path, depth_tolerance);
+        depth_map.depth = normalize_loaded_depth_orientation(
+            std::move(depth_map.depth));
+        depth_map.valid_mask = normalize_loaded_depth_orientation(
+            std::move(depth_map.valid_mask));
+
+        const int depth_height = static_cast<int>(depth_map.depth.shape()[0]);
+        const int depth_width = static_cast<int>(depth_map.depth.shape()[1]);
+        if (_image_width > 0 && _image_height > 0 &&
+            (depth_width != _image_width || depth_height != _image_height)) {
+            throw std::runtime_error(std::format(
+                "Depth map '{}' is {}x{} but training image '{}' is {}x{}",
+                path_to_utf8(_depth_path),
+                depth_width,
+                depth_height,
+                _image_name,
+                _image_width,
+                _image_height));
+        }
+
+        depth_map.depth = depth_map.depth.to(Device::CUDA, _stream);
+        depth_map.valid_mask = depth_map.valid_mask.to(Device::CUDA, _stream);
+        if (_stream) {
+            cudaStreamSynchronize(_stream);
+        }
+
+        _cached_depth = std::move(depth_map);
+        _depth_loaded = true;
+
+        LOG_DEBUG(
+            "Loaded depth for {}: [{},{}]",
+            _image_name,
+            _cached_depth.depth.shape()[0],
+            _cached_depth.depth.shape()[1]);
+
+        return _cached_depth;
     }
 
     void Camera::precompute_undistortion(float blank_pixels) {

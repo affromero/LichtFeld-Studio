@@ -601,7 +601,7 @@ namespace {
         auto camera =
             std::make_unique<lfs::core::Camera>(std::move(R), std::move(T), focal, focal, cx, cy, std::move(radial),
                                                 std::move(tangential), lfs::core::CameraModelType::PINHOLE,
-                                                "virtual_camera", "", "", width, height, -1);
+                                                "virtual_camera", "", "", "", width, height, -1);
         camera->set_image_dimensions(width, height);
         return camera;
     }

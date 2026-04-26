@@ -287,6 +287,14 @@ namespace lfs::training {
                 const auto cli_eval_steps = params.optimization.eval_steps;
                 const auto cli_save_steps = params.optimization.save_steps;
                 const auto cli_reduce_lr = params.optimization.reduce_lr_on_plateau;
+                const auto cli_use_depth_loss = params.optimization.use_depth_loss;
+                const auto cli_depth_loss_type = params.optimization.depth_loss_type;
+                const auto cli_depth_lambda = params.optimization.depth_lambda;
+                const auto cli_depth_tolerance = params.optimization.depth_tolerance;
+                const auto cli_depth_warmup_iterations =
+                    params.optimization.depth_warmup_iterations;
+                const auto cli_use_depth_confidence =
+                    params.optimization.use_depth_confidence;
 
                 const auto params_json = nlohmann::json::parse(params_str);
                 if (params_json.contains("optimization")) {
@@ -312,6 +320,17 @@ namespace lfs::training {
                 // Restore reduce_lr_on_plateau if it was enabled in CLI config
                 if (cli_reduce_lr.enabled)
                     params.optimization.reduce_lr_on_plateau = cli_reduce_lr;
+                if (cli_use_depth_loss ||
+                    cli_depth_loss_type != lfs::core::param::DepthLossType::None) {
+                    params.optimization.use_depth_loss = cli_use_depth_loss;
+                    params.optimization.depth_loss_type = cli_depth_loss_type;
+                    params.optimization.depth_lambda = cli_depth_lambda;
+                    params.optimization.depth_tolerance = cli_depth_tolerance;
+                    params.optimization.depth_warmup_iterations =
+                        cli_depth_warmup_iterations;
+                    params.optimization.use_depth_confidence =
+                        cli_use_depth_confidence;
+                }
             }
             strategy.set_optimization_params(params.optimization);
             file.clear();

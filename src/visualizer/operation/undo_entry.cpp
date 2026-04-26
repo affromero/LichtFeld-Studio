@@ -711,6 +711,7 @@ namespace lfs::vis::op {
                 snapshot.image_name,
                 snapshot.image_path,
                 snapshot.mask_path,
+                std::filesystem::path{},
                 snapshot.camera_width,
                 snapshot.camera_height,
                 snapshot.uid,

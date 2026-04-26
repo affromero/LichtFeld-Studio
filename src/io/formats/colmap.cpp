@@ -145,6 +145,22 @@ namespace lfs::io {
             }
             return it->second;
         }
+
+        [[nodiscard]] fs::path find_depth_sidecar(
+            const fs::path& dataset_root,
+            const std::string& image_name) {
+            const fs::path image_path = lfs::core::utf8_to_path(image_name);
+            const fs::path stem_path = image_path.parent_path() / image_path.stem();
+            const std::array<const char*, 2> extensions = {".npy", ".png"};
+            for (const char* extension : extensions) {
+                fs::path depth_path = dataset_root / "depths" / stem_path;
+                depth_path += extension;
+                if (safe_exists(depth_path)) {
+                    return depth_path;
+                }
+            }
+            return {};
+        }
     } // namespace
 
     // -----------------------------------------------------------------------------
@@ -1212,6 +1228,8 @@ namespace lfs::io {
             } else if (mask_lookup.ambiguous()) {
                 return make_ambiguous_mask_reference_error(base_path, img.name);
             }
+            const std::filesystem::path depth_path =
+                find_depth_sidecar(base_path, img.name);
 
             const int image_rotation_quadrants_cw =
                 image_rotation_quadrants_for_camera(
@@ -1243,6 +1261,7 @@ namespace lfs::io {
                 img.name,
                 image_path,
                 mask_path,
+                depth_path,
                 cam_data.width,
                 cam_data.height,
                 static_cast<int>(i),
@@ -1594,6 +1613,7 @@ namespace lfs::io {
                 img.name,
                 fs::path{}, // Empty image path
                 fs::path{}, // Empty mask path
+                fs::path{}, // Empty depth path
                 cam_data.width,
                 cam_data.height,
                 static_cast<int>(i),

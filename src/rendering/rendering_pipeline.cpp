@@ -974,6 +974,7 @@ namespace lfs::rendering {
                 "render_camera",
                 "none",
                 std::filesystem::path{}, // No mask path for render camera
+                std::filesystem::path{}, // No depth path for render camera
                 request.viewport_size.x,
                 request.viewport_size.y,
                 -1);

@@ -540,6 +540,7 @@ namespace lfs::python {
             name,
             lfs::core::utf8_to_path(image_path),
             std::filesystem::path{},
+            std::filesystem::path{},
             width, height,
             uid);
 

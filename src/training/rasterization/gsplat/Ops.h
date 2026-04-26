@@ -38,6 +38,32 @@ namespace gsplat_lfs {
         float* v_dirs,   // [..., 3] optional output
         cudaStream_t stream = nullptr);
 
+    void pack_depth_render_colors(
+        const float* rgb_colors, // [C, N, 3] optional for RGB+D modes
+        const float* depths,     // [C, N]
+        uint32_t C,
+        uint32_t N,
+        uint32_t channels,
+        float* colors, // [C, N, channels]
+        cudaStream_t stream = nullptr);
+
+    void extract_rgb_color_grads(
+        const float* v_colors, // [C, N, channels]
+        uint32_t C,
+        uint32_t N,
+        uint32_t channels,
+        float* v_rgb_colors, // [C, N, 3]
+        cudaStream_t stream = nullptr);
+
+    void accumulate_depth_color_grads_to_means(
+        const float* v_colors, // [C, N, channels]
+        const float* viewmats, // [C, 4, 4]
+        uint32_t C,
+        uint32_t N,
+        uint32_t channels,
+        float* v_means, // [N, 3]
+        cudaStream_t stream = nullptr);
+
     //=========================================================================
     // Tile Intersection
     //=========================================================================
@@ -263,6 +289,7 @@ namespace gsplat_lfs {
         float* means2d;           // [C, N, 2]
         float* depths;            // [C, N]
         float* colors;            // [C, N, channels]
+        float* rgb_colors;        // [C, N, 3] optional for RGB+D modes
         float* dirs;              // [C, N, 3] viewing directions for SH
         float* conics;            // [C, N, 3] covariance matrices
         int32_t* tiles_per_gauss; // [C, N]

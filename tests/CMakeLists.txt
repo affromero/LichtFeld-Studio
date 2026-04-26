@@ -64,7 +64,9 @@ endif()
 # Find LibTorch for tensor comparison tests
 # Set Torch_DIR based on platform
 get_filename_component(PROJ_ROOT_DIR "${CMAKE_SOURCE_DIR}" ABSOLUTE)
-if(WIN32)
+if(Torch_DIR)
+    message(STATUS "Tests: using user-provided Torch_DIR=${Torch_DIR}")
+elseif(WIN32)
     if(CMAKE_BUILD_TYPE STREQUAL "Release" OR NOT CMAKE_BUILD_TYPE)
         set(Torch_DIR "${PROJ_ROOT_DIR}/external/release/libtorch/share/cmake/Torch")
     else()

@@ -277,6 +277,12 @@ namespace lfs::training {
             lfs::core::Tensor grad_alpha;
         };
 
+        struct DepthLossResult {
+            lfs::core::Tensor loss;
+            lfs::core::Tensor grad_depth;
+            lfs::core::Tensor valid_fraction;
+        };
+
         // Masked photometric loss with optional alpha gradient
         std::expected<MaskLossResult, std::string> compute_photometric_loss_with_mask(
             const lfs::core::Tensor& corrected,
@@ -286,8 +292,17 @@ namespace lfs::training {
             const lfs::core::param::OptimizationParameters& opt_params,
             const lfs::core::Tensor& raw_rendered);
 
+        std::expected<DepthLossResult, std::string> compute_depth_loss_with_gradient(
+            const lfs::core::Tensor& predicted_depth,
+            const lfs::core::Tensor& target_depth,
+            const lfs::core::Tensor& valid_mask,
+            const lfs::core::Tensor& training_mask,
+            const lfs::core::param::OptimizationParameters& opt_params);
+
         // Validate masks exist for all cameras when mask mode is enabled
         std::expected<void, std::string> validate_masks();
+
+        std::expected<void, std::string> validate_depths();
 
         // Returns GPU tensor for loss (avoid sync!)
         std::expected<lfs::core::Tensor, std::string> compute_scale_reg_loss(
@@ -405,6 +420,8 @@ namespace lfs::training {
 
         // Pre-loaded mask from pipelined dataloader (used in train_step)
         lfs::core::Tensor pipelined_mask_;
+        lfs::core::Tensor pipelined_depth_;
+        lfs::core::Tensor pipelined_depth_valid_mask_;
 
         // Bilateral grid for appearance modeling (optional)
         std::unique_ptr<BilateralGrid> bilateral_grid_;
@@ -423,6 +440,9 @@ namespace lfs::training {
 
         // Cached GPU scalar to avoid per-iteration allocation
         core::Tensor loss_accumulator_;
+        core::Tensor photometric_loss_accumulator_;
+        core::Tensor depth_loss_accumulator_;
+        core::Tensor depth_valid_fraction_accumulator_;
 
         // Pre-allocated SSIM-map workspace for densification error maps.
         lfs::training::kernels::SSIMMapWorkspace densification_ssim_workspace_;

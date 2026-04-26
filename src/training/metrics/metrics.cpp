@@ -22,6 +22,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -87,6 +88,129 @@ namespace lfs::training {
                 return mask.unsqueeze(0).expand({layout.c, layout.h, layout.w});
             }
             return mask.unsqueeze(0).unsqueeze(0).expand({layout.n, layout.c, layout.h, layout.w});
+        }
+
+        void write_jet_color(
+            std::vector<float>& output,
+            const size_t pixel_index,
+            const size_t plane_size,
+            const float value) {
+            const float val = std::clamp(value, 0.0f, 1.0f);
+            float red = 0.0f;
+            float green = 0.0f;
+            float blue = 0.0f;
+            if (val < 0.25f) {
+                green = 4.0f * val;
+                blue = 1.0f;
+            } else if (val < 0.5f) {
+                green = 1.0f;
+                blue = 1.0f - 4.0f * (val - 0.25f);
+            } else if (val < 0.75f) {
+                red = 4.0f * (val - 0.5f);
+                green = 1.0f;
+            } else {
+                red = 1.0f;
+                green = 1.0f - 4.0f * (val - 0.75f);
+            }
+
+            output[pixel_index] = std::clamp(red, 0.0f, 1.0f);
+            output[plane_size + pixel_index] = std::clamp(green, 0.0f, 1.0f);
+            output[2 * plane_size + pixel_index] = std::clamp(blue, 0.0f, 1.0f);
+        }
+
+        lfs::core::Tensor make_chw_rgb_tensor(
+            const std::vector<float>& data,
+            const size_t height,
+            const size_t width) {
+            return lfs::core::Tensor::from_vector(
+                data,
+                {3, height, width},
+                lfs::core::Device::CPU);
+        }
+
+        std::vector<lfs::core::Tensor> make_depth_eval_images(
+            const lfs::core::Tensor& predicted_depth,
+            const lfs::core::Tensor& target_depth,
+            const lfs::core::Tensor& valid_mask) {
+            if (!predicted_depth.is_valid() ||
+                !target_depth.is_valid() ||
+                !valid_mask.is_valid()) {
+                return {};
+            }
+
+            auto pred_cpu = predicted_depth;
+            if (pred_cpu.ndim() == 3) {
+                pred_cpu = pred_cpu.squeeze(0);
+            }
+            pred_cpu = pred_cpu.to(lfs::core::Device::CPU)
+                           .to(lfs::core::DataType::Float32)
+                           .contiguous();
+            auto target_cpu = target_depth.to(lfs::core::Device::CPU)
+                                  .to(lfs::core::DataType::Float32)
+                                  .contiguous();
+            auto valid_cpu = valid_mask.to(lfs::core::Device::CPU)
+                                 .to(lfs::core::DataType::Float32)
+                                 .contiguous();
+
+            if (pred_cpu.ndim() != 2 ||
+                target_cpu.ndim() != 2 ||
+                valid_cpu.ndim() != 2 ||
+                pred_cpu.shape() != target_cpu.shape() ||
+                pred_cpu.shape() != valid_cpu.shape()) {
+                return {};
+            }
+
+            const size_t height = target_cpu.shape()[0];
+            const size_t width = target_cpu.shape()[1];
+            const size_t plane_size = height * width;
+            const std::vector<float> pred = pred_cpu.to_vector();
+            const std::vector<float> target = target_cpu.to_vector();
+            const std::vector<float> valid = valid_cpu.to_vector();
+            if (pred.size() != plane_size ||
+                target.size() != plane_size ||
+                valid.size() != plane_size) {
+                return {};
+            }
+
+            float min_depth = std::numeric_limits<float>::max();
+            float max_depth = std::numeric_limits<float>::lowest();
+            float max_error = 0.0f;
+            for (size_t i = 0; i < plane_size; ++i) {
+                if (valid[i] <= 0.0f || !std::isfinite(target[i])) {
+                    continue;
+                }
+                min_depth = std::min(min_depth, target[i]);
+                max_depth = std::max(max_depth, target[i]);
+                if (std::isfinite(pred[i])) {
+                    max_error = std::max(max_error, std::fabs(pred[i] - target[i]));
+                }
+            }
+            if (min_depth >= max_depth) {
+                return {};
+            }
+            max_error = std::max(max_error, 1e-6f);
+
+            std::vector<float> target_rgb(3 * plane_size, 0.0f);
+            std::vector<float> pred_rgb(3 * plane_size, 0.0f);
+            std::vector<float> error_rgb(3 * plane_size, 0.0f);
+            const float inv_range = 1.0f / (max_depth - min_depth);
+            for (size_t i = 0; i < plane_size; ++i) {
+                if (valid[i] <= 0.0f || !std::isfinite(target[i])) {
+                    continue;
+                }
+                const float pred_value = std::isfinite(pred[i]) ? pred[i] : target[i];
+                const float target_norm = (target[i] - min_depth) * inv_range;
+                const float pred_norm = (pred_value - min_depth) * inv_range;
+                const float error_norm = std::fabs(pred_value - target[i]) / max_error;
+                write_jet_color(target_rgb, i, plane_size, target_norm);
+                write_jet_color(pred_rgb, i, plane_size, pred_norm);
+                write_jet_color(error_rgb, i, plane_size, error_norm);
+            }
+
+            return {
+                make_chw_rgb_tensor(target_rgb, height, width),
+                make_chw_rgb_tensor(pred_rgb, height, width),
+                make_chw_rgb_tensor(error_rgb, height, width)};
         }
     } // namespace
 
@@ -565,9 +689,18 @@ namespace lfs::training {
 
             auto& splatData_mutable = const_cast<lfs::core::SplatData&>(splatData);
             RenderOutput r_output;
+            const bool save_depth_eval =
+                _params.optimization.enable_save_eval_images &&
+                _params.optimization.use_depth_loss &&
+                _params.optimization.depth_loss_type !=
+                    lfs::core::param::DepthLossType::None &&
+                _params.optimization.gut &&
+                cam->has_depth();
             if (_params.optimization.gut) {
                 r_output = gsplat_rasterize(*cam, splatData_mutable, background,
-                                            1.0f, false, GsplatRenderMode::RGB, true);
+                                            1.0f, false,
+                                            GsplatRenderMode::RGB,
+                                            true);
             } else {
                 r_output = fast_rasterize(*cam, splatData_mutable, background, _params.optimization.mip_filter);
             }
@@ -618,6 +751,41 @@ namespace lfs::training {
                     rgb_images,
                     true, // horizontal
                     4);   // separator width
+
+                if (save_depth_eval) {
+                    try {
+                        const auto depth_render = gsplat_rasterize(
+                            *cam,
+                            splatData_mutable,
+                            background,
+                            1.0f,
+                            false,
+                            GsplatRenderMode::ED,
+                            true);
+                        auto depth_map = cam->load_and_get_depth(
+                            _params.optimization.depth_tolerance);
+                        auto depth_valid = depth_map.valid_mask;
+                        if (mask.is_valid()) {
+                            depth_valid = depth_valid * mask;
+                        }
+                        const auto depth_images = make_depth_eval_images(
+                            depth_render.depth,
+                            depth_map.depth,
+                            depth_valid);
+                        if (!depth_images.empty()) {
+                            lfs::core::image_io::save_images_async(
+                                eval_dir / ("depth_" + std::to_string(image_idx) + ".png"),
+                                depth_images,
+                                true,
+                                4);
+                        }
+                    } catch (const std::exception& e) {
+                        LOG_WARN(
+                            "Eval: failed to save depth visualization for '{}': {}",
+                            cam->image_name(),
+                            e.what());
+                    }
+                }
             }
 
             image_idx++;

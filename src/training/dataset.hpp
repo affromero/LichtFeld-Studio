@@ -204,6 +204,8 @@ namespace lfs::training {
         CameraWithImage data;
         lfs::core::Tensor target;              // Empty tensor, not used
         std::optional<lfs::core::Tensor> mask; // Optional mask [H,W], float32
+        std::optional<lfs::core::Tensor> depth;
+        std::optional<lfs::core::Tensor> depth_valid_mask;
     };
 
     /// Camera dataset configuration
@@ -295,6 +297,8 @@ namespace lfs::training {
             return {
                 {cam.get(), std::move(image)},
                 lfs::core::Tensor(), // Empty target
+                std::nullopt,
+                std::nullopt,
                 std::nullopt};
         }
 
@@ -581,6 +585,11 @@ namespace lfs::training {
         bool apply_undistort = false;   // Apply precomputed undistortion to inputs
     };
 
+    struct PipelinedDepthConfig {
+        bool load_depths = false;
+        float depth_tolerance = 0.01f;
+    };
+
     // Pipelined DataLoader with GPU batch JPEG decoding
     template <typename Sampler>
     class PipelinedDataLoader {
@@ -590,11 +599,13 @@ namespace lfs::training {
         PipelinedDataLoader(std::shared_ptr<CameraDataset> dataset,
                             Sampler sampler,
                             lfs::io::PipelinedLoaderConfig config = {},
-                            PipelinedMaskConfig mask_config = {})
+                            PipelinedMaskConfig mask_config = {},
+                            PipelinedDepthConfig depth_config = {})
             : dataset_(dataset),
               sampler_(std::move(sampler)),
               config_(config),
               mask_config_(mask_config),
+              depth_config_(depth_config),
               loader_(std::make_shared<lfs::io::PipelinedImageLoader>(config)),
               shutdown_(false) {
 
@@ -637,11 +648,27 @@ namespace lfs::training {
                 CameraExample example{
                     CameraWithImage{cam.get(), std::move(ready.tensor)},
                     lfs::core::Tensor(),
+                    std::nullopt,
+                    std::nullopt,
                     std::nullopt};
 
                 // Attach mask if present
                 if (ready.mask && ready.mask->is_valid()) {
                     example.mask = std::move(*ready.mask);
+                }
+                if (depth_config_.load_depths) {
+                    if (!cam->has_depth()) {
+                        throw std::runtime_error(std::format(
+                            "Depth loading enabled but camera '{}' has no depth sidecar",
+                            cam->image_name()));
+                    }
+                    auto depth_map = cam->load_and_get_depth(
+                        depth_config_.depth_tolerance);
+                    if (depth_map.depth.is_valid() &&
+                        depth_map.valid_mask.is_valid()) {
+                        example.depth = std::move(depth_map.depth);
+                        example.depth_valid_mask = std::move(depth_map.valid_mask);
+                    }
                 }
 
                 return example;
@@ -732,6 +759,7 @@ namespace lfs::training {
         Sampler sampler_;
         lfs::io::PipelinedLoaderConfig config_;
         PipelinedMaskConfig mask_config_;
+        PipelinedDepthConfig depth_config_;
         std::shared_ptr<lfs::io::PipelinedImageLoader> loader_;
 
         std::unordered_map<size_t, size_t> sequence_to_camera_;
@@ -765,18 +793,20 @@ namespace lfs::training {
     inline auto create_pipelined_dataloader(std::shared_ptr<CameraDataset> dataset,
                                             lfs::io::PipelinedLoaderConfig config = {},
                                             PipelinedMaskConfig mask_config = {},
+                                            PipelinedDepthConfig depth_config = {},
                                             uint64_t seed = 0) {
         const size_t dataset_size = dataset->size();
         return std::make_unique<PipelinedDataLoader<SamplerType>>(
-            dataset, SamplerType(dataset_size, seed), config, mask_config);
+            dataset, SamplerType(dataset_size, seed), config, mask_config, depth_config);
     }
 
     inline auto create_infinite_pipelined_dataloader(std::shared_ptr<CameraDataset> dataset,
                                                      lfs::io::PipelinedLoaderConfig config = {},
                                                      PipelinedMaskConfig mask_config = {},
+                                                     PipelinedDepthConfig depth_config = {},
                                                      uint64_t seed = 0) {
         return create_pipelined_dataloader<InfiniteRandomSampler>(
-            dataset, config, mask_config, seed);
+            dataset, config, mask_config, depth_config, seed);
     }
 
 } // namespace lfs::training
