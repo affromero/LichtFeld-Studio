@@ -200,6 +200,7 @@ namespace lfs::core {
             opt_json["depth_tolerance"] = depth_tolerance;
             opt_json["depth_warmup_iterations"] = depth_warmup_iterations;
             opt_json["use_depth_confidence"] = use_depth_confidence;
+            opt_json["position_anchor_lambda"] = position_anchor_lambda;
             opt_json["prune_opacity"] = prune_opacity;
             opt_json["grow_scale3d"] = grow_scale3d;
             opt_json["grow_scale2d"] = grow_scale2d;
@@ -276,6 +277,8 @@ namespace lfs::core {
                 if (depth_warmup_iterations < 0)
                     return "Depth loss requires depth_warmup_iterations >= 0";
             }
+            if (position_anchor_lambda < 0.0f)
+                return "Position anchor requires position_anchor_lambda >= 0";
             return {};
         }
 
@@ -525,6 +528,9 @@ namespace lfs::core {
             }
             if (json.contains("use_depth_confidence")) {
                 params.use_depth_confidence = json["use_depth_confidence"];
+            }
+            if (json.contains("position_anchor_lambda")) {
+                params.position_anchor_lambda = json["position_anchor_lambda"];
             }
             if (json.contains("prune_opacity")) {
                 params.prune_opacity = json["prune_opacity"];

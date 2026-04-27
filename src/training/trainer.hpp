@@ -443,6 +443,8 @@ namespace lfs::training {
         core::Tensor photometric_loss_accumulator_;
         core::Tensor depth_loss_accumulator_;
         core::Tensor depth_valid_fraction_accumulator_;
+        core::Tensor position_anchor_means_;
+        bool position_anchor_shape_warned_ = false;
 
         // Pre-allocated SSIM-map workspace for densification error maps.
         lfs::training::kernels::SSIMMapWorkspace densification_ssim_workspace_;

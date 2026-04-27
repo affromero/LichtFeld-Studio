@@ -87,6 +87,13 @@ namespace lfs::app {
                         checkpoint_params.optimization.debug_python = params->optimization.debug_python;
                         checkpoint_params.optimization.debug_python_port = params->optimization.debug_python_port;
                         checkpoint_params.optimization.config_file = params->optimization.config_file;
+                        if (params->optimization.position_anchor_lambda > 0.0f) {
+                            checkpoint_params.optimization.position_anchor_lambda =
+                                params->optimization.position_anchor_lambda;
+                            LOG_INFO(
+                                "Applying resume position anchor override: lambda={}",
+                                checkpoint_params.optimization.position_anchor_lambda);
+                        }
                         if (params->optimization.use_depth_loss ||
                             params->optimization.depth_loss_type !=
                                 core::param::DepthLossType::None) {

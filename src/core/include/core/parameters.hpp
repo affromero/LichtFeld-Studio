@@ -188,6 +188,9 @@ namespace lfs::core {
             int depth_warmup_iterations = 500;
             bool use_depth_confidence = false;
 
+            // Keep scanner-initialized Gaussians close to their seed points.
+            float position_anchor_lambda = 0.0f;
+
             // Shared densification thresholds and reset controls
             float prune_opacity = 0.005f;
             float grow_scale3d = 0.01f;

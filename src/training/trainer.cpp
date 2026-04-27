@@ -1862,6 +1862,15 @@ namespace lfs::training {
             strategy_->set_training_dataset(train_dataset_);
             strategy_->initialize(get_runtime_optimization_params());
             LOG_DEBUG("Strategy initialized");
+            position_anchor_means_ = {};
+            position_anchor_shape_warned_ = false;
+            if (params_.optimization.position_anchor_lambda > 0.0f) {
+                position_anchor_means_ = splat.means().clone();
+                LOG_INFO(
+                    "Position anchor enabled: lambda={} anchored_gaussians={}",
+                    params_.optimization.position_anchor_lambda,
+                    splat.size());
+            }
 
             // Initialize bilateral grid if enabled
             if (auto result = initialize_bilateral_grid(); !result) {
@@ -3413,6 +3422,36 @@ namespace lfs::training {
                 nvtxRangePop();
             }
 
+            lfs::core::Tensor position_anchor_loss_gpu;
+            if (!in_controller_phase &&
+                params_.optimization.position_anchor_lambda > 0.0f &&
+                position_anchor_means_.is_valid() &&
+                position_anchor_means_.numel() > 0) {
+                auto& model_means = strategy_->get_model().means();
+                if (model_means.shape() == position_anchor_means_.shape()) {
+                    nvtxRangePush("position_anchor_loss");
+                    auto mean_delta = model_means.sub(position_anchor_means_);
+                    const float lambda =
+                        params_.optimization.position_anchor_lambda;
+                    position_anchor_loss_gpu =
+                        mean_delta.mul(mean_delta).mean().mul(lambda);
+                    auto anchor_grad =
+                        mean_delta.mul(2.0f * lambda /
+                                       static_cast<float>(mean_delta.numel()));
+                    strategy_->get_optimizer()
+                        .get_grad(ParamType::Means)
+                        .add_(anchor_grad);
+                    loss_tensor_gpu = loss_tensor_gpu + position_anchor_loss_gpu;
+                    nvtxRangePop();
+                } else if (!position_anchor_shape_warned_) {
+                    LOG_WARN(
+                        "Position anchor disabled because topology changed: current={} anchor={}",
+                        model_means.shape().str(),
+                        position_anchor_means_.shape().str());
+                    position_anchor_shape_warned_ = true;
+                }
+            }
+
             // Sparsification phase logging (once per phase transition)
             if (params_.optimization.enable_sparsity) {
                 const int first_sparsify_iter = get_sparsity_boundary_iteration() + 1;
@@ -3449,12 +3488,17 @@ namespace lfs::training {
                     depth_valid_fraction_tensor_gpu.is_valid()
                         ? depth_valid_fraction_tensor_gpu.item<float>()
                         : 0.0f;
+                const float position_anchor_value =
+                    position_anchor_loss_gpu.is_valid()
+                        ? position_anchor_loss_gpu.item<float>()
+                        : 0.0f;
                 LOG_INFO(
-                    "Loss components {} | Photometric: {:.6f} | Depth: {:.6f} | Depth Valid: {:.6f}",
+                    "Loss components {} | Photometric: {:.6f} | Depth: {:.6f} | Depth Valid: {:.6f} | Position Anchor: {:.6f}",
                     iter,
                     photometric_value,
                     depth_value,
-                    depth_valid_value);
+                    depth_valid_value,
+                    position_anchor_value);
                 if (progress_) {
                     progress_->update(
                         iter,

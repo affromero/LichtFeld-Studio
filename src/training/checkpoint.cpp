@@ -295,6 +295,8 @@ namespace lfs::training {
                     params.optimization.depth_warmup_iterations;
                 const auto cli_use_depth_confidence =
                     params.optimization.use_depth_confidence;
+                const auto cli_position_anchor_lambda =
+                    params.optimization.position_anchor_lambda;
 
                 const auto params_json = nlohmann::json::parse(params_str);
                 if (params_json.contains("optimization")) {
@@ -330,6 +332,10 @@ namespace lfs::training {
                         cli_depth_warmup_iterations;
                     params.optimization.use_depth_confidence =
                         cli_use_depth_confidence;
+                }
+                if (cli_position_anchor_lambda > 0.0f) {
+                    params.optimization.position_anchor_lambda =
+                        cli_position_anchor_lambda;
                 }
             }
             strategy.set_optimization_params(params.optimization);
