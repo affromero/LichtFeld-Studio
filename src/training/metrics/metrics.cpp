@@ -191,10 +191,15 @@ namespace lfs::training {
             max_error = std::max(max_error, 1e-6f);
 
             std::vector<float> target_rgb(3 * plane_size, 0.0f);
-            std::vector<float> pred_rgb(3 * plane_size, 0.0f);
+            std::vector<float> pred_full_rgb(3 * plane_size, 0.0f);
+            std::vector<float> pred_masked_rgb(3 * plane_size, 0.0f);
             std::vector<float> error_rgb(3 * plane_size, 0.0f);
             const float inv_range = 1.0f / (max_depth - min_depth);
             for (size_t i = 0; i < plane_size; ++i) {
+                if (std::isfinite(pred[i])) {
+                    const float pred_norm = (pred[i] - min_depth) * inv_range;
+                    write_jet_color(pred_full_rgb, i, plane_size, pred_norm);
+                }
                 if (valid[i] <= 0.0f || !std::isfinite(target[i])) {
                     continue;
                 }
@@ -203,14 +208,15 @@ namespace lfs::training {
                 const float pred_norm = (pred_value - min_depth) * inv_range;
                 const float error_norm = std::fabs(pred_value - target[i]) / max_error;
                 write_jet_color(target_rgb, i, plane_size, target_norm);
-                write_jet_color(pred_rgb, i, plane_size, pred_norm);
+                write_jet_color(pred_masked_rgb, i, plane_size, pred_norm);
                 write_jet_color(error_rgb, i, plane_size, error_norm);
             }
 
             return {
                 make_chw_rgb_tensor(target_rgb, height, width),
-                make_chw_rgb_tensor(pred_rgb, height, width),
-                make_chw_rgb_tensor(error_rgb, height, width)};
+                make_chw_rgb_tensor(pred_masked_rgb, height, width),
+                make_chw_rgb_tensor(error_rgb, height, width),
+                make_chw_rgb_tensor(pred_full_rgb, height, width)};
         }
     } // namespace
 
