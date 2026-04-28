@@ -211,6 +211,8 @@ namespace lfs::core {
 
             // Random seed for reproducibility
             opt_json["seed"] = seed;
+            static constexpr const char* TRAINING_SAMPLER_NAMES[] = {"random", "b2g_triplet"};
+            opt_json["training_sampler"] = TRAINING_SAMPLER_NAMES[static_cast<int>(training_sampler)];
             static constexpr const char* BG_MODE_NAMES[] = {"solid_color", "modulation", "image", "random"};
             opt_json["bg_mode"] = BG_MODE_NAMES[static_cast<int>(bg_mode)];
             opt_json["bg_color"] = {bg_color[0], bg_color[1], bg_color[2]};
@@ -616,6 +618,16 @@ namespace lfs::core {
             // Random seed for reproducibility
             if (json.contains("seed")) {
                 params.seed = json["seed"].get<uint64_t>();
+            }
+            if (json.contains("training_sampler")) {
+                const std::string mode = json["training_sampler"];
+                if (mode == "random") {
+                    params.training_sampler = TrainingSamplerMode::Random;
+                } else if (mode == "b2g_triplet") {
+                    params.training_sampler = TrainingSamplerMode::B2GTriplet;
+                } else {
+                    LOG_WARN("Invalid training_sampler '{}' in JSON, using random", mode);
+                }
             }
 
             return params;

@@ -3565,11 +3565,24 @@ namespace lfs::training {
                 LOG_WARN("Training dataloader uses non-deterministic sampling because seed is 0");
             }
 
-            auto train_dataloader = create_infinite_pipelined_dataloader(
-                train_dataset_,
-                pipelined_config,
-                mask_pipeline_config,
-                params_.optimization.seed);
+            const auto training_sampler = params_.optimization.training_sampler;
+            if (training_sampler == lfs::core::param::TrainingSamplerMode::B2GTriplet) {
+                LOG_INFO("Training sampler: b2g_triplet");
+            } else {
+                LOG_INFO("Training sampler: random");
+            }
+            auto train_dataloader =
+                training_sampler == lfs::core::param::TrainingSamplerMode::B2GTriplet
+                    ? create_b2g_triplet_infinite_pipelined_dataloader(
+                          train_dataset_,
+                          pipelined_config,
+                          mask_pipeline_config,
+                          params_.optimization.seed)
+                    : create_random_order_infinite_pipelined_dataloader(
+                          train_dataset_,
+                          pipelined_config,
+                          mask_pipeline_config,
+                          params_.optimization.seed);
             auto active_image_loader_guard = makeScopeGuard([this]() {
                 clearActiveImageLoader();
             });
