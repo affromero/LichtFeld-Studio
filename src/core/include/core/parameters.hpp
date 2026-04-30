@@ -43,6 +43,11 @@ namespace lfs::core {
             Pearson
         };
 
+        enum class TrainingSamplerMode {
+            Random,    // Shuffle all training images independently
+            B2GTriplet // Shuffle BLK2GO frame groups, then emit front/left/right
+        };
+
         inline constexpr std::string_view kStrategyMCMC = "mcmc";
         inline constexpr std::string_view kStrategyMRNF = "mrnf";
         inline constexpr std::string_view kStrategyMNRFLegacy = "mnrf";
@@ -214,6 +219,7 @@ namespace lfs::core {
             float bounds_percentile = 0.8f;
             bool use_error_map = true;
             bool use_edge_map = true;
+            TrainingSamplerMode training_sampler = TrainingSamplerMode::Random;
 
             // Random initialization parameters
             bool random = false;        // Use random initialization instead of SfM

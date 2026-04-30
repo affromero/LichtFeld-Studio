@@ -11,9 +11,11 @@
 #include "io/nvcodec_image_loader.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cuda_runtime.h>
 #include <fstream>
-#include <random>
+#include <thread>
 
 #ifdef __linux__
 #include <sys/sysinfo.h>
@@ -40,16 +42,20 @@ namespace lfs::io {
 
         std::string generate_short_hash() {
             static constexpr char hex_chars[] = "0123456789abcdef";
+            static std::atomic<uint64_t> counter{0};
 
-            // Thread-safe: use local RNG objects to avoid data races
-            thread_local std::random_device rd;
-            thread_local std::mt19937 gen(rd());
-            std::uniform_int_distribution<> dis(0, 15);
+            const uint64_t count = counter.fetch_add(1, std::memory_order_relaxed);
+            const uint64_t ticks = static_cast<uint64_t>(
+                std::chrono::steady_clock::now().time_since_epoch().count());
+            const uint64_t thread_hash =
+                static_cast<uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+            uint64_t value = ticks ^ (thread_hash << 1) ^ count;
 
             std::string hash;
             hash.reserve(8);
             for (int i = 0; i < 8; ++i) {
-                hash += hex_chars[dis(gen)];
+                hash += hex_chars[value & 0xF];
+                value >>= 4;
             }
             return hash;
         }

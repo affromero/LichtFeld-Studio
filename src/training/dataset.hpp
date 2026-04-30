@@ -9,6 +9,8 @@
 #include "core/tensor.hpp"
 #include "io/pipelined_image_loader.hpp"
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <format>
@@ -20,9 +22,72 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace lfs::training {
+    namespace detail {
+        constexpr size_t B2G_CAMERA_COUNT = 3;
+
+        enum class B2GCameraSlot : size_t {
+            Front = 0,
+            Left = 1,
+            Right = 2
+        };
+
+        [[nodiscard]] inline std::optional<B2GCameraSlot> parse_b2g_camera_slot(
+            const std::string& camera_name) {
+            if (camera_name == "front") {
+                return B2GCameraSlot::Front;
+            }
+            if (camera_name == "left") {
+                return B2GCameraSlot::Left;
+            }
+            if (camera_name == "right") {
+                return B2GCameraSlot::Right;
+            }
+            return std::nullopt;
+        }
+
+        [[nodiscard]] inline std::optional<std::pair<int, B2GCameraSlot>>
+        parse_b2g_image_identity(std::string image_name) {
+            const auto dot_pos = image_name.find_last_of('.');
+            if (dot_pos != std::string::npos) {
+                image_name = image_name.substr(0, dot_pos);
+            }
+
+            const auto sep_pos = image_name.find_last_of('_');
+            if (sep_pos == std::string::npos || sep_pos == 0 ||
+                sep_pos + 1 >= image_name.size()) {
+                return std::nullopt;
+            }
+
+            const std::string camera_name = image_name.substr(0, sep_pos);
+            const auto camera_slot = parse_b2g_camera_slot(camera_name);
+            if (!camera_slot.has_value()) {
+                return std::nullopt;
+            }
+
+            const std::string frame_text = image_name.substr(sep_pos + 1);
+            if (frame_text.empty() ||
+                !std::ranges::all_of(frame_text, [](const unsigned char c) {
+                    return std::isdigit(c) != 0;
+                })) {
+                return std::nullopt;
+            }
+
+            return std::make_pair(std::stoi(frame_text), *camera_slot);
+        }
+    } // namespace detail
+
+    struct B2GTripletSamplerData {
+        using FrameSlots = std::array<std::optional<size_t>, detail::B2G_CAMERA_COUNT>;
+
+        std::vector<FrameSlots> frames;
+        std::vector<size_t> ungrouped_indices;
+        size_t parsed_images = 0;
+        size_t complete_frames = 0;
+    };
 
     /// A basic locked, blocking MPMC queue.
     /// Every push/pop is guarded by a mutex. Condition variable is used
@@ -193,6 +258,102 @@ namespace lfs::training {
         size_t index_;
     };
 
+    /// Infinite sampler that emits B2G front/left/right images from the same
+    /// frame consecutively while shuffling frame order between epochs.
+    class InfiniteB2GTripletSampler {
+    public:
+        explicit InfiniteB2GTripletSampler(size_t size, uint64_t seed = 0)
+            : seed_(seed),
+              epoch_(0),
+              index_(0) {
+            data_.ungrouped_indices.resize(size);
+            for (size_t i = 0; i < size; ++i) {
+                data_.ungrouped_indices[i] = i;
+            }
+            reset();
+        }
+
+        explicit InfiniteB2GTripletSampler(B2GTripletSamplerData data, uint64_t seed = 0)
+            : data_(std::move(data)),
+              seed_(seed),
+              epoch_(0),
+              index_(0) {
+            reset();
+        }
+
+        void reset(std::optional<size_t> new_size = std::nullopt) {
+            (void)new_size;
+            indices_.clear();
+
+            std::vector<size_t> frame_order(data_.frames.size());
+            for (size_t i = 0; i < data_.frames.size(); ++i) {
+                frame_order[i] = i;
+            }
+            shuffle_vector(frame_order);
+
+            for (const size_t frame_idx : frame_order) {
+                const auto& frame = data_.frames[frame_idx];
+                append_if_present(frame, detail::B2GCameraSlot::Front);
+                append_if_present(frame, detail::B2GCameraSlot::Left);
+                append_if_present(frame, detail::B2GCameraSlot::Right);
+            }
+
+            auto ungrouped = data_.ungrouped_indices;
+            shuffle_vector(ungrouped);
+            indices_.insert(indices_.end(), ungrouped.begin(), ungrouped.end());
+
+            index_ = 0;
+            ++epoch_;
+        }
+
+        std::optional<std::vector<size_t>> next(size_t batch_size) {
+            if (indices_.empty()) {
+                return std::nullopt;
+            }
+            if (index_ >= indices_.size()) {
+                reset();
+            }
+
+            const size_t end = std::min(index_ + batch_size, indices_.size());
+            std::vector<size_t> batch(indices_.begin() + index_, indices_.begin() + end);
+            index_ = end;
+            return batch;
+        }
+
+        size_t size() const { return indices_.size(); }
+
+    private:
+        template <typename T>
+        void shuffle_vector(std::vector<T>& values) const {
+            if (values.empty()) {
+                return;
+            }
+            if (seed_ != 0) {
+                std::mt19937 gen(static_cast<uint32_t>(seed_ + epoch_));
+                std::shuffle(values.begin(), values.end(), gen);
+            } else {
+                std::random_device rd;
+                std::mt19937 gen(rd());
+                std::shuffle(values.begin(), values.end(), gen);
+            }
+        }
+
+        void append_if_present(
+            const B2GTripletSamplerData::FrameSlots& frame,
+            detail::B2GCameraSlot slot) {
+            const auto index = frame[static_cast<size_t>(slot)];
+            if (index.has_value()) {
+                indices_.push_back(*index);
+            }
+        }
+
+        B2GTripletSamplerData data_;
+        uint64_t seed_;
+        uint64_t epoch_;
+        size_t index_;
+        std::vector<size_t> indices_;
+    };
+
     /// Camera with loaded image
     struct CameraWithImage {
         lfs::core::Camera* camera;
@@ -358,6 +519,44 @@ namespace lfs::training {
                 return ext != ".jpg" && ext != ".jpeg";
             });
             return static_cast<float>(count) / static_cast<float>(indices_.size());
+        }
+
+        [[nodiscard]] B2GTripletSamplerData get_b2g_triplet_sampler_data() const {
+            std::unordered_map<int, B2GTripletSamplerData::FrameSlots> frame_map;
+            std::vector<int> frame_keys;
+            B2GTripletSamplerData result;
+
+            for (size_t local_idx = 0; local_idx < indices_.size(); ++local_idx) {
+                const auto& cam = cameras_[indices_[local_idx]];
+                const auto identity = detail::parse_b2g_image_identity(cam->image_name());
+                if (!identity.has_value()) {
+                    result.ungrouped_indices.push_back(local_idx);
+                    continue;
+                }
+
+                const auto [frame_idx, camera_slot] = *identity;
+                if (!frame_map.contains(frame_idx)) {
+                    frame_map.emplace(frame_idx, B2GTripletSamplerData::FrameSlots{});
+                    frame_keys.push_back(frame_idx);
+                }
+                frame_map[frame_idx][static_cast<size_t>(camera_slot)] = local_idx;
+                ++result.parsed_images;
+            }
+
+            std::ranges::sort(frame_keys);
+            result.frames.reserve(frame_keys.size());
+            for (const int frame_idx : frame_keys) {
+                const auto& slots = frame_map.at(frame_idx);
+                const bool complete = slots[0].has_value() &&
+                                      slots[1].has_value() &&
+                                      slots[2].has_value();
+                if (complete) {
+                    ++result.complete_frames;
+                }
+                result.frames.push_back(slots);
+            }
+
+            return result;
         }
 
     private:
@@ -807,6 +1006,50 @@ namespace lfs::training {
                                                      uint64_t seed = 0) {
         return create_pipelined_dataloader<InfiniteRandomSampler>(
             dataset, config, mask_config, depth_config, seed);
+    }
+
+    inline auto create_b2g_triplet_infinite_pipelined_dataloader(
+        std::shared_ptr<CameraDataset> dataset,
+        lfs::io::PipelinedLoaderConfig config = {},
+        PipelinedMaskConfig mask_config = {},
+        PipelinedDepthConfig depth_config = {},
+        uint64_t seed = 0) {
+        auto sampler_data = dataset->get_b2g_triplet_sampler_data();
+        LOG_INFO(
+            "B2G triplet sampler: parsed {} images into {} frame groups ({} complete), {} ungrouped images",
+            sampler_data.parsed_images,
+            sampler_data.frames.size(),
+            sampler_data.complete_frames,
+            sampler_data.ungrouped_indices.size());
+        if (sampler_data.frames.empty()) {
+            LOG_WARN("B2G triplet sampler found no frame groups; shuffling all images as ungrouped");
+            if (sampler_data.ungrouped_indices.empty()) {
+                sampler_data.ungrouped_indices.resize(dataset->size());
+                for (size_t i = 0; i < dataset->size(); ++i) {
+                    sampler_data.ungrouped_indices[i] = i;
+                }
+            }
+        }
+        return std::make_unique<PipelinedDataLoader<InfiniteB2GTripletSampler>>(
+            dataset,
+            InfiniteB2GTripletSampler(sampler_data, seed),
+            config,
+            mask_config,
+            depth_config);
+    }
+
+    inline auto create_random_order_infinite_pipelined_dataloader(
+        std::shared_ptr<CameraDataset> dataset,
+        lfs::io::PipelinedLoaderConfig config = {},
+        PipelinedMaskConfig mask_config = {},
+        PipelinedDepthConfig depth_config = {},
+        uint64_t seed = 0) {
+        return std::make_unique<PipelinedDataLoader<InfiniteB2GTripletSampler>>(
+            dataset,
+            InfiniteB2GTripletSampler(dataset->size(), seed),
+            config,
+            mask_config,
+            depth_config);
     }
 
 } // namespace lfs::training

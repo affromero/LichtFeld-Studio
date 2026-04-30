@@ -129,6 +129,52 @@ namespace lfs::training {
             lfs::core::Tensor mask;
         };
 
+        [[nodiscard]] std::expected<void, std::string> validate_native_rational_gut_gt(
+            const lfs::core::param::OptimizationParameters& optimization,
+            const lfs::core::Camera& camera,
+            const lfs::core::Tensor& gt_image) {
+            if (!optimization.gut || optimization.undistort ||
+                camera.camera_model_type() != lfs::core::CameraModelType::RATIONAL) {
+                return {};
+            }
+
+            if (!gt_image.is_valid() || gt_image.ndim() < 2) {
+                return std::unexpected(
+                    "Native RATIONAL GUT training received an invalid GT tensor");
+            }
+
+            const size_t height =
+                gt_image.ndim() > 2 ? gt_image.shape()[1] : gt_image.shape()[0];
+            const size_t width =
+                gt_image.ndim() > 2 ? gt_image.shape()[2] : gt_image.shape()[1];
+            const auto expected_width = static_cast<size_t>(camera.camera_width());
+            const auto expected_height = static_cast<size_t>(camera.camera_height());
+
+            static std::atomic_bool logged_native_rational_gt{false};
+            if (!logged_native_rational_gt.exchange(true)) {
+                LOG_INFO(
+                    "Native RATIONAL GUT GT audit: tensor={}x{}, camera={}x{}, "
+                    "undistort_precomputed={}, undistort_prepared={}",
+                    width,
+                    height,
+                    expected_width,
+                    expected_height,
+                    camera.is_undistort_precomputed(),
+                    camera.is_undistort_prepared());
+            }
+
+            if (width != expected_width || height != expected_height) {
+                return std::unexpected(
+                    "Native RATIONAL GUT training expected GT tensor " +
+                    std::to_string(expected_width) + "x" +
+                    std::to_string(expected_height) + " but received " +
+                    std::to_string(width) + "x" + std::to_string(height) +
+                    ". This indicates an unintended undistort/resize path.");
+            }
+
+            return {};
+        }
+
         [[nodiscard]] lfs::io::LoadParams make_metrics_load_params(
             const Trainer::GTLoadConfigSnapshot& gt_config,
             const lfs::core::Camera& camera,
@@ -2592,6 +2638,11 @@ namespace lfs::training {
                     return std::unexpected("Use --gut or --undistort to train on cameras with non-pinhole model.");
                 }
             }
+            if (auto audit = validate_native_rational_gut_gt(
+                    params_.optimization, *cam, gt_image);
+                !audit) {
+                return std::unexpected(audit.error());
+            }
 
             current_iteration_ = iter;
 
@@ -3824,12 +3875,26 @@ namespace lfs::training {
                 LOG_WARN("Training dataloader uses non-deterministic sampling because seed is 0");
             }
 
-            auto train_dataloader = create_infinite_pipelined_dataloader(
-                train_dataset_,
-                pipelined_config,
-                mask_pipeline_config,
-                depth_pipeline_config,
-                params_.optimization.seed);
+            const auto training_sampler = params_.optimization.training_sampler;
+            if (training_sampler == lfs::core::param::TrainingSamplerMode::B2GTriplet) {
+                LOG_INFO("Training sampler: b2g_triplet");
+            } else {
+                LOG_INFO("Training sampler: random");
+            }
+            auto train_dataloader =
+                training_sampler == lfs::core::param::TrainingSamplerMode::B2GTriplet
+                    ? create_b2g_triplet_infinite_pipelined_dataloader(
+                          train_dataset_,
+                          pipelined_config,
+                          mask_pipeline_config,
+                          depth_pipeline_config,
+                          params_.optimization.seed)
+                    : create_random_order_infinite_pipelined_dataloader(
+                          train_dataset_,
+                          pipelined_config,
+                          mask_pipeline_config,
+                          depth_pipeline_config,
+                          params_.optimization.seed);
             auto active_image_loader_guard = makeScopeGuard([this]() {
                 clearActiveImageLoader();
             });
